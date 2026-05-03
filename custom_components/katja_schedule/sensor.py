@@ -34,7 +34,7 @@ class PendingReviewSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_pending_review"
-        self._attr_name = "Katja Schedule — Pending Review"
+        self._attr_name = "Schedule — Pending Review"
         self._attr_icon = "mdi:clipboard-check-outline"
 
     @property
@@ -64,7 +64,7 @@ class NextFlightSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_next_flight"
-        self._attr_name = "Katja Schedule — Next Flight"
+        self._attr_name = "Schedule — Next Flight"
         self._attr_icon = "mdi:airplane"
 
     def _find_flight(self) -> dict | None:
@@ -106,7 +106,7 @@ class LastSyncSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_last_sync"
-        self._attr_name = "Katja Schedule — Last Sync"
+        self._attr_name = "Schedule — Last Sync"
         self._attr_icon = "mdi:sync"
         self._attr_device_class = "timestamp"
 

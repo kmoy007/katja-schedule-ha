@@ -1,7 +1,7 @@
 """Katja Schedule — Home Assistant integration.
 
-Polls the schedule app's /api/data endpoint and creates:
-  - Calendar entities per family member (Katja, Ken, Caleb, Sam, Shared)
+Polls a schedule app's /api/data endpoint and creates:
+  - Calendar entities per family member (auto-discovered or configured)
   - Sensor entities (pending review count, next flight, last sync)
 """
 from __future__ import annotations

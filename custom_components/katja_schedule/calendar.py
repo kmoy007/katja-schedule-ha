@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, FAMILY_MEMBERS, SHARED_KEYWORDS
+from .const import DOMAIN, CONF_MEMBERS, SHARED_KEYWORDS
 from .coordinator import KatjaScheduleCoordinator
 from .time_parser import event_to_datetimes
 
@@ -23,21 +23,23 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: KatjaScheduleCoordinator = hass.data[DOMAIN][entry.entry_id]
+    members_str = entry.data.get(CONF_MEMBERS, "")
+    members = [m.strip() for m in members_str.split(",") if m.strip()]
     entities = []
-    for member in FAMILY_MEMBERS:
-        entities.append(KatjaPersonCalendar(coordinator, entry, member))
-    entities.append(KatjaPersonCalendar(coordinator, entry, "Shared"))
+    for member in members:
+        entities.append(KatjaPersonCalendar(coordinator, entry, member, members))
+    entities.append(KatjaPersonCalendar(coordinator, entry, "Shared", members))
     async_add_entities(entities, update_before_add=True)
 
 
-def _matches_person(who: str, person: str) -> bool:
+def _matches_person(who: str, person: str, all_members: list[str]) -> bool:
     """Does the event's 'who' field belong to this person's calendar?"""
     if not who:
         return person == "Shared"
     wl = who.lower().strip()
     if person == "Shared":
         return any(kw in wl for kw in SHARED_KEYWORDS) or not any(
-            m.lower() in wl for m in FAMILY_MEMBERS
+            m.lower() in wl for m in all_members
         )
     return person.lower() in wl
 
@@ -87,19 +89,21 @@ class KatjaPersonCalendar(CoordinatorEntity, CalendarEntity):
         coordinator: KatjaScheduleCoordinator,
         entry: ConfigEntry,
         person: str,
+        all_members: list[str],
     ) -> None:
         super().__init__(coordinator)
         self._person = person
+        self._all_members = all_members
         slug = person.lower().replace(" ", "_")
         self._attr_unique_id = f"{entry.entry_id}_{slug}"
-        self._attr_name = f"Katja Schedule — {person}"
+        self._attr_name = f"Schedule — {person}"
 
     def _get_events_for_person(self) -> list[dict]:
         if not self.coordinator.data:
             return []
         overlay = self.coordinator.data.get("overlay", {})
         events = overlay.get("manual_events", [])
-        return [e for e in events if _matches_person(e.get("who", ""), self._person)]
+        return [e for e in events if _matches_person(e.get("who", ""), self._person, self._all_members)]
 
     @property
     def event(self) -> CalendarEvent | None:

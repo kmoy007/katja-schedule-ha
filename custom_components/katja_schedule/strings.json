@@ -2,11 +2,12 @@
   "config": {
     "step": {
       "user": {
-        "title": "Connect to Katja Schedule",
+        "title": "Connect to Family Schedule",
         "description": "Enter the API URL and bearer token for your schedule app.",
         "data": {
           "api_url": "API URL",
           "api_token": "API Token",
+          "members": "Family members (comma-separated, or leave blank to auto-discover)",
           "scan_interval": "Poll interval (seconds)"
         }
       }

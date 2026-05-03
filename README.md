@@ -1,15 +1,10 @@
 # Katja Schedule — Home Assistant Integration
 
-Custom integration that connects Home Assistant to the [Katja Schedule](https://katja-schedule.onrender.com) family logistics app.
+Custom integration that connects Home Assistant to a family schedule app via its `/api/data` endpoints.
 
 ## What it creates
 
-**Calendar entities** (one per family member):
-- `calendar.katja_schedule_katja`
-- `calendar.katja_schedule_ken`
-- `calendar.katja_schedule_caleb`
-- `calendar.katja_schedule_sam`
-- `calendar.katja_schedule_shared`
+**Calendar entities** — one per family member (auto-discovered from event data or manually configured), plus a Shared calendar for group events.
 
 **Sensor entities:**
 - `sensor.katja_schedule_pending_review` — count of events needing review
@@ -19,31 +14,14 @@ Custom integration that connects Home Assistant to the [Katja Schedule](https://
 ## Installation
 
 1. In HACS: Settings → Custom Repositories → paste this repo URL → Category: Integration
-2. Install "Katja Schedule" from HACS
+2. Install from HACS
 3. Restart Home Assistant
 4. Settings → Integrations → Add → "Katja Schedule"
-5. Enter the API URL and bearer token
+5. Enter the API URL, bearer token, and optionally family member names
 
-## Week Planner Card configuration
-
-```yaml
-type: custom:week-planner-card
-days: 14
-startingDay: today
-calendars:
-  - entity: calendar.katja_schedule_katja
-    color: '#FF6B6B'
-  - entity: calendar.katja_schedule_ken
-    color: '#4ECDC4'
-  - entity: calendar.katja_schedule_caleb
-    color: '#45B7D1'
-  - entity: calendar.katja_schedule_sam
-    color: '#96CEB4'
-  - entity: calendar.katja_schedule_shared
-    color: '#FFEAA7'
-```
+Family members can be entered as a comma-separated list (e.g. "Alice, Bob, Charlie") or left blank to auto-discover from the event data.
 
 ## Requirements
 
-- `API_DATA_TOKEN` must be configured on the schedule app (Render env var)
+- `API_DATA_TOKEN` must be configured on the schedule app
 - The same token is entered during HA integration setup
