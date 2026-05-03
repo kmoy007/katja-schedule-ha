@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_API_URL, DOMAIN, stable_id
 from .coordinator import KatjaScheduleCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class PendingReviewSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_pending_review"
+        self._attr_unique_id = stable_id(entry.data.get(CONF_API_URL, ""), "pending_review")
         self._attr_name = "Schedule — Pending Review"
         self._attr_icon = "mdi:clipboard-check-outline"
 
@@ -63,7 +63,7 @@ class NextFlightSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_next_flight"
+        self._attr_unique_id = stable_id(entry.data.get(CONF_API_URL, ""), "next_flight")
         self._attr_name = "Schedule — Next Flight"
         self._attr_icon = "mdi:airplane"
 
@@ -105,7 +105,7 @@ class LastSyncSensor(CoordinatorEntity, SensorEntity):
 
     def __init__(self, coordinator: KatjaScheduleCoordinator, entry: ConfigEntry):
         super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_last_sync"
+        self._attr_unique_id = stable_id(entry.data.get(CONF_API_URL, ""), "last_sync")
         self._attr_name = "Schedule — Last Sync"
         self._attr_icon = "mdi:sync"
         self._attr_device_class = "timestamp"

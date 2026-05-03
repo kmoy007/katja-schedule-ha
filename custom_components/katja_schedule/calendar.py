@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_MEMBERS, SHARED_KEYWORDS
+from .const import DOMAIN, CONF_API_URL, CONF_MEMBERS, SHARED_KEYWORDS, stable_id
 from .coordinator import KatjaScheduleCoordinator
 from .time_parser import event_to_datetimes
 
@@ -109,7 +109,8 @@ class KatjaPersonCalendar(CoordinatorEntity, CalendarEntity):
         self._person = person
         self._all_members = all_members
         slug = person.lower().replace(" ", "_")
-        self._attr_unique_id = f"{entry.entry_id}_{slug}"
+        api_url = entry.data.get(CONF_API_URL, "")
+        self._attr_unique_id = stable_id(api_url, slug)
         self._attr_name = f"Schedule — {person}"
 
     def _get_events_for_person(self) -> list[dict]:
