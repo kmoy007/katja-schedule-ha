@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -111,13 +112,19 @@ class LastSyncSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = "timestamp"
 
     @property
-    def native_value(self) -> str | None:
+    def native_value(self) -> datetime | None:
         if not self.coordinator.data:
             return None
         last_sync = self.coordinator.data.get("last_sync")
         if not last_sync:
             return None
-        return last_sync.get("synced_at")
+        synced_at = last_sync.get("synced_at")
+        if not synced_at:
+            return None
+        try:
+            return datetime.fromisoformat(synced_at)
+        except (ValueError, TypeError):
+            return None
 
     @property
     def extra_state_attributes(self) -> dict:

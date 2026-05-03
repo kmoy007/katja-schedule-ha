@@ -72,7 +72,7 @@ def _event_to_calendar_event(ev: dict) -> CalendarEvent | None:
         return None
     try:
         start, end = event_to_datetimes(event_date, time_str)
-    except (ValueError, TypeError):
+    except Exception:
         return None
 
     summary = ev.get("what", "")
@@ -136,20 +136,27 @@ class KatjaPersonCalendar(CoordinatorEntity, CalendarEntity):
     @property
     def event(self) -> CalendarEvent | None:
         """The next upcoming event — used as the entity state."""
-        now_ts = datetime.now().astimezone().timestamp()
-        best = None
-        best_ts = None
-        for ev in self._get_events_for_person():
-            cal_ev = _event_to_calendar_event(ev)
-            if cal_ev is None:
-                continue
-            ev_ts = self._to_timestamp(cal_ev.start)
-            if ev_ts < now_ts:
-                continue
-            if best_ts is None or ev_ts < best_ts:
-                best = cal_ev
-                best_ts = ev_ts
-        return best
+        try:
+            now_ts = datetime.now().astimezone().timestamp()
+            best = None
+            best_ts = None
+            for ev in self._get_events_for_person():
+                try:
+                    cal_ev = _event_to_calendar_event(ev)
+                except Exception:
+                    continue
+                if cal_ev is None:
+                    continue
+                ev_ts = self._to_timestamp(cal_ev.start)
+                if ev_ts < now_ts:
+                    continue
+                if best_ts is None or ev_ts < best_ts:
+                    best = cal_ev
+                    best_ts = ev_ts
+            return best
+        except Exception as exc:
+            _LOGGER.debug("Error in event property for %s: %s", self._person, exc)
+            return None
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime,
