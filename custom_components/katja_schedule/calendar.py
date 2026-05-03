@@ -25,6 +25,20 @@ async def async_setup_entry(
     coordinator: KatjaScheduleCoordinator = hass.data[DOMAIN][entry.entry_id]
     members_str = entry.data.get(CONF_MEMBERS, "")
     members = [m.strip() for m in members_str.split(",") if m.strip()]
+
+    # Auto-discover members from event data if not configured
+    if not members and coordinator.data:
+        events = coordinator.data.get("overlay", {}).get("manual_events", [])
+        names = set()
+        for e in events:
+            who = (e.get("who") or "").strip()
+            if who and who.lower() not in SHARED_KEYWORDS:
+                for part in who.split(","):
+                    name = part.strip()
+                    if name:
+                        names.add(name)
+        members = sorted(names)
+
     entities = []
     for member in members:
         entities.append(KatjaPersonCalendar(coordinator, entry, member, members))
