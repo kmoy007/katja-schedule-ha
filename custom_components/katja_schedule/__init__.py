@@ -143,5 +143,35 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/agent_action",
+        vol.Required("message"): str,
+    })
+    @websocket_api.async_response
+    async def ws_agent_action(hass, connection, msg):
+        """Send a message to the schedule app's chat agent and return the response."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        def _call():
+            with httpx.Client(timeout=60) as client:
+                resp = client.post(
+                    f"{api_url}/api/chat",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json={"message": msg["message"], "history": []},
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
+    websocket_api.async_register_command(hass, ws_agent_action)
