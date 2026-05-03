@@ -21,16 +21,15 @@ PLATFORMS = ["calendar", "sensor"]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Katja Schedule from a config entry."""
-    # Clean up stale entities from previous installs that used entry_id-based
-    # unique_ids (pre-v0.4.0). These collide when the integration is
-    # deleted and re-added.
+    # Clean up ALL orphaned katja_schedule entities from any previous
+    # config entry (deleted installs, old unique_id formats, etc.).
     registry = er.async_get(hass)
-    stale = [
-        e for e in er.async_entries_for_config_entry(registry, entry.entry_id)
-        if e.unique_id and e.unique_id.startswith(entry.entry_id)
+    orphans = [
+        e for e in registry.entities.values()
+        if e.platform == DOMAIN and e.config_entry_id != entry.entry_id
     ]
-    for e in stale:
-        _LOGGER.info("Removing stale entity %s (old unique_id format)", e.entity_id)
+    for e in orphans:
+        _LOGGER.info("Removing orphaned entity %s from old config entry", e.entity_id)
         registry.async_remove(e.entity_id)
 
     coordinator = KatjaScheduleCoordinator(

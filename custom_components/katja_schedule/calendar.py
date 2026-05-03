@@ -39,8 +39,14 @@ async def async_setup_entry(
                         names.add(name)
         members = sorted(names)
 
+    # Deduplicate by slug to prevent unique_id collisions from case variants
+    seen_slugs = set()
     entities = []
     for member in members:
+        slug = member.lower().replace(" ", "_")
+        if slug in seen_slugs:
+            continue
+        seen_slugs.add(slug)
         entities.append(KatjaPersonCalendar(coordinator, entry, member, members))
     entities.append(KatjaPersonCalendar(coordinator, entry, "Shared", members))
     async_add_entities(entities, update_before_add=True)
