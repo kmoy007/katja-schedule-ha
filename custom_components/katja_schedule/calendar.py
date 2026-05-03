@@ -120,27 +120,29 @@ class KatjaPersonCalendar(CoordinatorEntity, CalendarEntity):
         events = overlay.get("manual_events", [])
         return [e for e in events if _matches_person(e.get("who", ""), self._person, self._all_members)]
 
+    @staticmethod
+    def _to_timestamp(dt_or_date):
+        """Normalize date/datetime to a comparable timestamp."""
+        if isinstance(dt_or_date, datetime):
+            return dt_or_date.timestamp()
+        return datetime(dt_or_date.year, dt_or_date.month, dt_or_date.day).timestamp()
+
     @property
     def event(self) -> CalendarEvent | None:
         """The next upcoming event — used as the entity state."""
-        now = datetime.now().astimezone()
-        today = now.date()
+        now_ts = datetime.now().astimezone().timestamp()
         best = None
-        best_start = None
+        best_ts = None
         for ev in self._get_events_for_person():
             cal_ev = _event_to_calendar_event(ev)
             if cal_ev is None:
                 continue
-            ev_start = cal_ev.start
-            if isinstance(ev_start, date) and not isinstance(ev_start, datetime):
-                if ev_start < today:
-                    continue
-            elif isinstance(ev_start, datetime):
-                if ev_start < now:
-                    continue
-            if best_start is None or ev_start < best_start:
+            ev_ts = self._to_timestamp(cal_ev.start)
+            if ev_ts < now_ts:
+                continue
+            if best_ts is None or ev_ts < best_ts:
                 best = cal_ev
-                best_start = ev_start
+                best_ts = ev_ts
         return best
 
     async def async_get_events(

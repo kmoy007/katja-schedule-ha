@@ -36,12 +36,13 @@ class KatjaScheduleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             url = user_input[CONF_API_URL].rstrip("/")
             token = user_input[CONF_API_TOKEN]
+            def _validate(u, t):
+                with httpx.Client(timeout=15) as c:
+                    return c.get(f"{u}/api/data/status",
+                                 headers={"Authorization": f"Bearer {t}"})
+
             try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(
-                        f"{url}/api/data/status",
-                        headers={"Authorization": f"Bearer {token}"},
-                    )
+                resp = await self.hass.async_add_executor_job(_validate, url, token)
                 if resp.status_code == 401:
                     errors["base"] = "invalid_auth"
                 elif resp.status_code == 503:
@@ -56,22 +57,24 @@ class KatjaScheduleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
 
             if not errors:
-                # Auto-discover family members from API if not provided
                 members_str = user_input.get(CONF_MEMBERS, "").strip()
                 if not members_str:
+                    def _discover(u, t):
+                        with httpx.Client(timeout=15) as c:
+                            return c.get(f"{u}/api/data/events",
+                                         headers={"Authorization": f"Bearer {t}"})
                     try:
-                        async with httpx.AsyncClient(timeout=15) as client:
-                            resp = await client.get(
-                                f"{url}/api/data/events",
-                                headers={"Authorization": f"Bearer {token}"},
-                            )
+                        resp = await self.hass.async_add_executor_job(_discover, url, token)
                         if resp.status_code == 200:
                             events = resp.json().get("events", [])
                             names = set()
                             for e in events:
                                 who = (e.get("who") or "").strip()
                                 if who and who.lower() not in ("kids", "family", "everyone"):
-                                    names.add(who)
+                                    for part in who.split(","):
+                                        name = part.strip()
+                                        if name:
+                                            names.add(name)
                             if names:
                                 members_str = ", ".join(sorted(names))
                     except Exception:
