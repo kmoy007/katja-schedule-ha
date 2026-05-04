@@ -25,3 +25,5 @@ Family members can be entered as a comma-separated list (e.g. "Alice, Bob, Charl
 
 - `API_DATA_TOKEN` must be configured on the schedule app
 - The same token is entered during HA integration setup
+
+# sync test
