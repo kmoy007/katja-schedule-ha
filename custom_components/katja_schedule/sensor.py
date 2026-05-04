@@ -136,4 +136,5 @@ class LastSyncSensor(CoordinatorEntity, SensorEntity):
             "event_count": last_sync.get("event_count", 0),
             "calendar_count": len(last_sync.get("calendars", [])),
             "build_sha": bv.get("short_sha", ""),
+            "build_time": bv.get("build_time", ""),
         }
