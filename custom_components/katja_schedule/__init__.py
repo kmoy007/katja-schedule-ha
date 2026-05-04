@@ -26,12 +26,29 @@ PLATFORMS = ["calendar", "sensor"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Katja Schedule from a config entry."""
     registry = er.async_get(hass)
+    # Remove entities from old, deleted config entries.
     orphans = [
         e for e in registry.entities.values()
         if e.platform == DOMAIN and e.config_entry_id != entry.entry_id
     ]
     for e in orphans:
         _LOGGER.info("Removing orphaned entity %s from old config entry", e.entity_id)
+        registry.async_remove(e.entity_id)
+
+    # v0.12.0: per-person calendar entities were collapsed into a single
+    # `Schedule` calendar with unique_id ending in `_all`. Sweep any older
+    # per-person entries (unique_id `ks_<hash>_<slug>` where slug != "all"
+    # and platform is calendar) so the registry doesn't accumulate stale
+    # rows.
+    legacy_calendars = [
+        e for e in registry.entities.values()
+        if e.platform == DOMAIN
+        and e.config_entry_id == entry.entry_id
+        and e.domain == "calendar"
+        and not (e.unique_id or "").endswith("_all")
+    ]
+    for e in legacy_calendars:
+        _LOGGER.info("Removing legacy per-person calendar %s", e.entity_id)
         registry.async_remove(e.entity_id)
 
     coordinator = KatjaScheduleCoordinator(

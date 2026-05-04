@@ -1,4 +1,18 @@
-"""Calendar entities — one per family member + a shared calendar."""
+"""Single unified calendar entity exposing all schedule events.
+
+Each event carries metadata in its ``description`` for the custom card to
+parse:
+
+    Who: Katja
+    Status: new        # calendar | manual | new | changed | conflict
+                       # | orphan | hidden_rule | hidden_oneoff
+    Where: ...
+    Flight: BA279 LAX→LHR
+
+Status mirrors renderer.py classification on the web app, so the HA card can
+show the same set of categories as the schedule UI (pending review,
+cancelled/skipped, hidden-by-rule, hidden-one-off).
+"""
 from __future__ import annotations
 
 import logging
@@ -10,11 +24,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_API_URL, CONF_MEMBERS, SHARED_KEYWORDS, stable_id
+from .const import DOMAIN, CONF_API_URL, stable_id
 from .coordinator import KatjaScheduleCoordinator
 from .time_parser import event_to_datetimes
 
 _LOGGER = logging.getLogger(__name__)
+
+# Keep COMPARE_FIELDS in sync with renderer.py — these are the fields whose
+# divergence between overlay and calendar cache marks an event as "changed".
+COMPARE_FIELDS = ("date", "time", "what", "where")
 
 
 async def async_setup_entry(
@@ -23,49 +41,99 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: KatjaScheduleCoordinator = hass.data[DOMAIN][entry.entry_id]
-    members_str = entry.data.get(CONF_MEMBERS, "")
-    members = [m.strip() for m in members_str.split(",") if m.strip()]
+    async_add_entities(
+        [KatjaScheduleCalendar(coordinator, entry)],
+        update_before_add=True,
+    )
 
-    # Auto-discover members from event data if not configured
-    if not members and coordinator.data:
-        events = coordinator.data.get("overlay", {}).get("manual_events", [])
-        names = set()
-        for e in events:
-            who = (e.get("who") or "").strip()
-            if who and who.lower() not in SHARED_KEYWORDS:
-                for part in who.split(","):
-                    name = part.strip()
-                    if name:
-                        names.add(name)
-        members = sorted(names)
 
-    # Deduplicate by slug to prevent unique_id collisions from case variants
-    seen_slugs = set()
-    entities = []
-    for member in members:
-        slug = member.lower().replace(" ", "_")
-        if slug in seen_slugs:
+def _fields_differ(a: dict, b: dict) -> list[str]:
+    return [
+        f for f in COMPARE_FIELDS
+        if (a.get(f) or "").strip() != (b.get(f) or "").strip()
+    ]
+
+
+def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
+    """Local copy of rules.pruning_pattern_matches — the integration ships
+    standalone so it can't import the web app's modules. Behaviour must match
+    the server side: contains/exact/starts_with on `what`, optional source
+    scoping by calendar_label."""
+    what = (ev.get("what") or "").lower()
+    label = ev.get("calendar_label") or ""
+    for r in rules or []:
+        pat = (r.get("pattern") or "").strip().lower()
+        if not pat:
             continue
-        seen_slugs.add(slug)
-        entities.append(KatjaPersonCalendar(coordinator, entry, member, members))
-    entities.append(KatjaPersonCalendar(coordinator, entry, "Shared", members))
-    async_add_entities(entities, update_before_add=True)
+        sources = r.get("sources") or []
+        if sources and label not in sources:
+            continue
+        mode = r.get("match_mode") or "contains"
+        if mode == "exact":
+            if what == pat:
+                return True
+        elif mode == "starts_with":
+            if what.startswith(pat):
+                return True
+        else:  # contains
+            if pat in what:
+                return True
+    return False
 
 
-def _matches_person(who: str, person: str, all_members: list[str]) -> bool:
-    """Does the event's 'who' field belong to this person's calendar?"""
-    if not who:
-        return person == "Shared"
-    wl = who.lower().strip()
-    if person == "Shared":
-        return any(kw in wl for kw in SHARED_KEYWORDS) or not any(
-            m.lower() in wl for m in all_members
-        )
-    return person.lower() in wl
+def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
+    """Return all events tagged with status. Mirrors renderer.py except it
+    also emits hidden categories so the card can reveal them under a toggle."""
+    manual_events = overlay.get("manual_events", []) or []
+    cal_events = cal_cache.get("events", []) or []
+    excluded_ids = set(overlay.get("excluded_ids", []) or [])
+    rules = overlay.get("pruning_rules", []) or []
+
+    cal_by_id = {e["event_id"]: e for e in cal_events if e.get("event_id")}
+    overlay_ids = {e.get("event_id") for e in manual_events if e.get("event_id")}
+    have_sync = bool(cal_events)
+
+    rows: list[dict] = []
+
+    # 1) Overlay (curated) rows
+    for ev in manual_events:
+        row = dict(ev)
+        ev_id = ev.get("event_id")
+        if ev_id and ev_id in cal_by_id:
+            cal_ev = cal_by_id[ev_id]
+            diffs = _fields_differ(ev, cal_ev)
+            if diffs:
+                hand_edited = set(ev.get("hand_edited_fields") or [])
+                row["status"] = (
+                    "conflict" if any(f in hand_edited for f in diffs)
+                    else "changed"
+                )
+            else:
+                row["status"] = "calendar"
+        elif ev_id and have_sync:
+            row["status"] = "orphan"
+        else:
+            row["status"] = "manual" if ev.get("source") == "manual" else "calendar"
+        rows.append(row)
+
+    # 2) Calendar events not in overlay → "new" (pending) or hidden
+    for cev in cal_events:
+        ev_id = cev.get("event_id")
+        if not ev_id or ev_id in overlay_ids:
+            continue
+        row = dict(cev)
+        if ev_id in excluded_ids:
+            row["status"] = (
+                "hidden_rule" if _matches_pruning_rule(rules, cev)
+                else "hidden_oneoff"
+            )
+        else:
+            row["status"] = "new"
+        rows.append(row)
+    return rows
 
 
-def _event_to_calendar_event(ev: dict) -> CalendarEvent | None:
-    """Convert an overlay event dict to a HA CalendarEvent."""
+def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     event_date = ev.get("date", "")
     time_str = ev.get("time", "")
     if not event_date:
@@ -75,107 +143,117 @@ def _event_to_calendar_event(ev: dict) -> CalendarEvent | None:
     except Exception:
         return None
 
-    summary = ev.get("what", "")
-    is_drive = "drive" in summary.lower()
-    if is_drive:
+    summary = ev.get("what", "") or ""
+    if "drive" in summary.lower():
         summary = f"\U0001f697 {summary}"
 
-    description_parts = []
-    if ev.get("where"):
-        description_parts.append(ev["where"])
+    parts: list[str] = []
+    if ev.get("who"):
+        parts.append(f"Who: {ev['who']}")
     status = ev.get("status", "")
-    if status and status not in ("manual", "calendar"):
-        description_parts.append(f"Status: {status}")
+    if status:
+        parts.append(f"Status: {status}")
+    if ev.get("where"):
+        parts.append(f"Where: {ev['where']}")
     if ev.get("flight"):
         f = ev["flight"]
-        description_parts.append(
-            f"Flight: {f.get('number', '')} {f.get('origin', '')}→{f.get('destination', '')}"
+        parts.append(
+            f"Flight: {f.get('number','')} "
+            f"{f.get('origin','')}→{f.get('destination','')}"
         )
+    if ev.get("calendar_label"):
+        parts.append(f"Source: {ev['calendar_label']}")
 
     return CalendarEvent(
         summary=summary,
         start=start,
         end=end,
-        location=ev.get("where", ""),
-        description="\n".join(description_parts) if description_parts else None,
+        location=ev.get("where", "") or "",
+        description="\n".join(parts) if parts else None,
     )
 
 
-class KatjaPersonCalendar(CoordinatorEntity, CalendarEntity):
-    """Calendar entity for one family member (or the shared calendar)."""
+def _is_hidden(ev: dict) -> bool:
+    return ev.get("status") in ("hidden_rule", "hidden_oneoff")
+
+
+def _is_flagged_text(what: str) -> bool:
+    """Cancelled/skipped events keep the marker in `what` itself."""
+    upper = (what or "").upper()
+    return "CANCELLED" in upper or "SKIPPED" in upper
+
+
+class KatjaScheduleCalendar(CoordinatorEntity, CalendarEntity):
+    """Single calendar entity — all events, all categories.
+
+    The custom card filters categories via the description's Status: line.
+    Stock HA calendar cards will see every event including hidden ones.
+    """
 
     def __init__(
         self,
         coordinator: KatjaScheduleCoordinator,
         entry: ConfigEntry,
-        person: str,
-        all_members: list[str],
     ) -> None:
         super().__init__(coordinator)
-        self._person = person
-        self._all_members = all_members
-        slug = person.lower().replace(" ", "_")
         api_url = entry.data.get(CONF_API_URL, "")
-        self._attr_unique_id = stable_id(api_url, slug)
-        self._attr_name = f"Schedule — {person}"
+        self._attr_unique_id = stable_id(api_url, "all")
+        self._attr_name = "Schedule"
 
-    def _get_events_for_person(self) -> list[dict]:
+    def _all_rows(self) -> list[dict]:
         if not self.coordinator.data:
             return []
-        overlay = self.coordinator.data.get("overlay", {})
-        events = overlay.get("manual_events", [])
-        return [e for e in events if _matches_person(e.get("who", ""), self._person, self._all_members)]
+        overlay = self.coordinator.data.get("overlay", {}) or {}
+        cal_cache = self.coordinator.data.get("calendar_cache", {}) or {}
+        return _classify_events(overlay, cal_cache)
 
     @staticmethod
-    def _to_timestamp(dt_or_date):
-        """Normalize date/datetime to a comparable timestamp."""
-        if isinstance(dt_or_date, datetime):
-            return dt_or_date.timestamp()
-        return datetime(dt_or_date.year, dt_or_date.month, dt_or_date.day).timestamp()
+    def _ts(d) -> float:
+        if isinstance(d, datetime):
+            return d.timestamp()
+        return datetime(d.year, d.month, d.day).timestamp()
 
     @property
     def event(self) -> CalendarEvent | None:
-        """The next upcoming event — used as the entity state."""
+        """Next visible upcoming event — used as entity state. Hidden and
+        cancelled/skipped events are excluded from the state but still
+        returned by async_get_events."""
         try:
             now_ts = datetime.now().astimezone().timestamp()
-            best = None
-            best_ts = None
-            for ev in self._get_events_for_person():
-                try:
-                    cal_ev = _event_to_calendar_event(ev)
-                except Exception:
+            best, best_ts = None, None
+            for ev in self._all_rows():
+                if _is_hidden(ev) or _is_flagged_text(ev.get("what", "")):
                     continue
+                cal_ev = _to_calendar_event(ev)
                 if cal_ev is None:
                     continue
-                ev_ts = self._to_timestamp(cal_ev.start)
-                if ev_ts < now_ts:
+                ts = self._ts(cal_ev.start)
+                if ts < now_ts:
                     continue
-                if best_ts is None or ev_ts < best_ts:
-                    best = cal_ev
-                    best_ts = ev_ts
+                if best_ts is None or ts < best_ts:
+                    best, best_ts = cal_ev, ts
             return best
         except Exception as exc:
-            _LOGGER.debug("Error in event property for %s: %s", self._person, exc)
+            _LOGGER.debug("Error in event property: %s", exc)
             return None
 
     async def async_get_events(
         self, hass: HomeAssistant, start_date: datetime, end_date: datetime,
     ) -> list[CalendarEvent]:
-        """Return events in the given range."""
-        result = []
         sd = start_date.date() if isinstance(start_date, datetime) else start_date
         ed = end_date.date() if isinstance(end_date, datetime) else end_date
-        for ev in self._get_events_for_person():
-            event_date_str = ev.get("date", "")
-            if not event_date_str:
+        out: list[CalendarEvent] = []
+        for ev in self._all_rows():
+            ds = ev.get("date", "")
+            if not ds:
                 continue
             try:
-                event_date = date.fromisoformat(event_date_str)
+                d = date.fromisoformat(ds)
             except ValueError:
                 continue
-            if event_date < sd or event_date > ed:
+            if d < sd or d > ed:
                 continue
-            cal_ev = _event_to_calendar_event(ev)
+            cal_ev = _to_calendar_event(ev)
             if cal_ev:
-                result.append(cal_ev)
-        return result
+                out.append(cal_ev)
+        return out

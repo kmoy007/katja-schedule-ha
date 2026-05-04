@@ -10,7 +10,6 @@ from homeassistant import config_entries
 from .const import (
     CONF_API_TOKEN,
     CONF_API_URL,
-    CONF_MEMBERS,
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -21,7 +20,6 @@ _LOGGER = logging.getLogger(__name__)
 STEP_USER_DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_API_URL): str,
     vol.Required(CONF_API_TOKEN): str,
-    vol.Optional(CONF_MEMBERS, default=""): str,
     vol.Optional(CONF_SCAN_INTERVAL, default=DEFAULT_SCAN_INTERVAL): int,
 })
 
@@ -36,6 +34,7 @@ class KatjaScheduleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             url = user_input[CONF_API_URL].rstrip("/")
             token = user_input[CONF_API_TOKEN]
+
             def _validate(u, t):
                 with httpx.Client(timeout=15) as c:
                     return c.get(f"{u}/api/data/status",
@@ -57,30 +56,7 @@ class KatjaScheduleConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
 
             if not errors:
-                members_str = user_input.get(CONF_MEMBERS, "").strip()
-                if not members_str:
-                    def _discover(u, t):
-                        with httpx.Client(timeout=15) as c:
-                            return c.get(f"{u}/api/data/events",
-                                         headers={"Authorization": f"Bearer {t}"})
-                    try:
-                        resp = await self.hass.async_add_executor_job(_discover, url, token)
-                        if resp.status_code == 200:
-                            events = resp.json().get("events", [])
-                            names = set()
-                            for e in events:
-                                who = (e.get("who") or "").strip()
-                                if who and who.lower() not in ("kids", "family", "everyone"):
-                                    for part in who.split(","):
-                                        name = part.strip()
-                                        if name:
-                                            names.add(name)
-                            if names:
-                                members_str = ", ".join(sorted(names))
-                    except Exception:
-                        pass
-                user_input[CONF_MEMBERS] = members_str
-
+                user_input[CONF_API_URL] = url
                 await self.async_set_unique_id(url)
                 self._abort_if_unique_id_configured()
                 return self.async_create_entry(
