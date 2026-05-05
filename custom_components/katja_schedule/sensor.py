@@ -10,8 +10,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .calendar import _classify_events
 from .const import CONF_API_URL, DOMAIN, stable_id
 from .coordinator import KatjaScheduleCoordinator
+
+_REVIEW_STATUSES = ("new", "changed", "orphan", "conflict")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,22 +41,30 @@ class PendingReviewSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = "Schedule — Pending Review"
         self._attr_icon = "mdi:clipboard-check-outline"
 
+    def _review_events(self) -> list[dict]:
+        """Status fields are computed from the overlay+cache pair, not stored
+        on overlay rows directly — go through _classify_events so this sensor
+        agrees with the calendar entity and the web app's review counts.
+        Reading raw `e.get('status')` from manual_events would always return
+        nothing and report 0, hiding real pending review work."""
+        if not self.coordinator.data:
+            return []
+        overlay = self.coordinator.data.get("overlay", {}) or {}
+        cal_cache = self.coordinator.data.get("calendar_cache", {}) or {}
+        return [
+            r for r in _classify_events(overlay, cal_cache)
+            if r.get("status") in _REVIEW_STATUSES
+        ]
+
     @property
     def native_value(self) -> int:
-        if not self.coordinator.data:
-            return 0
-        events = self.coordinator.data.get("overlay", {}).get("manual_events", [])
-        return sum(1 for e in events
-                   if e.get("status") in ("new", "changed", "orphan", "conflict"))
+        return len(self._review_events())
 
     @property
     def extra_state_attributes(self) -> dict:
-        if not self.coordinator.data:
-            return {}
-        events = self.coordinator.data.get("overlay", {}).get("manual_events", [])
-        counts = {"new": 0, "changed": 0, "orphan": 0, "conflict": 0}
-        for e in events:
-            s = e.get("status", "")
+        counts = {s: 0 for s in _REVIEW_STATUSES}
+        for r in self._review_events():
+            s = r.get("status", "")
             if s in counts:
                 counts[s] += 1
         return counts

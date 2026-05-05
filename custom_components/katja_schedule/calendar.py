@@ -47,10 +47,27 @@ async def async_setup_entry(
     )
 
 
+# Comparison normalization — must match renderer._normalize_for_diff on the
+# web app side. Without this, Google iCal description churn (line endings,
+# blank lines that become " · · " runs) flags events as CHANGED on every
+# refresh even though the user hasn't modified anything.
+import re as _re
+_WS_RE = _re.compile(r"\s+")
+_BULLET_RUN_RE = _re.compile(r"(\s*·\s*){2,}")
+
+
+def _normalize_for_diff(s: str) -> str:
+    if not s:
+        return ""
+    s = _BULLET_RUN_RE.sub(" · ", s)
+    s = _WS_RE.sub(" ", s).strip()
+    return s
+
+
 def _fields_differ(a: dict, b: dict) -> list[str]:
     return [
         f for f in COMPARE_FIELDS
-        if (a.get(f) or "").strip() != (b.get(f) or "").strip()
+        if _normalize_for_diff(a.get(f) or "") != _normalize_for_diff(b.get(f) or "")
     ]
 
 
