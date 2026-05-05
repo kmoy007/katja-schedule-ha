@@ -189,6 +189,36 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/skip_week",
+        vol.Required("event_id"): str,
+    })
+    @websocket_api.async_response
+    async def ws_skip_week(hass, connection, msg):
+        """Skip this occurrence for the week — same idempotent rewrite the
+        web app's ⚠️ Skip-this-week button does, but reachable from the card
+        without needing a browser session."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    f"{api_url}/api/actions/skip-week/{msg['event_id']}",
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_agent_action)
+    websocket_api.async_register_command(hass, ws_skip_week)

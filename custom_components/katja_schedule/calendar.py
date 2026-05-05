@@ -180,6 +180,13 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         )
     if ev.get("calendar_label"):
         parts.append(f"Source: {ev['calendar_label']}")
+    # Card-only: surface the overlay event_id so the Skip-this-week button
+    # can POST to /api/actions/skip-week/<id>. HA's CalendarEvent doesn't
+    # expose ids in the calendar API response, and stuffing it into the
+    # description is the same pattern Who/Status/Source already use. Last
+    # line so it's least obtrusive in stock HA calendar cards.
+    if ev.get("event_id"):
+        parts.append(f"EventId: {ev['event_id']}")
 
     return CalendarEvent(
         summary=summary,
