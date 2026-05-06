@@ -98,6 +98,8 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         vol.Required("type"): "katja_schedule/refresh_drive",
         vol.Required("origin"): str,
         vol.Required("destination"): str,
+        vol.Optional("arrival_time"): str,
+        vol.Optional("departure_time"): str,
     })
     @websocket_api.async_response
     async def ws_refresh_drive(hass, connection, msg):
@@ -107,13 +109,23 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "not_configured", str(e))
             return
 
+        # Forward optional time params if present so the card can opt
+        # into arrive-by convergence (the web's default since
+        # 2026-05-05). Older cards still work — backend treats absent
+        # times as live mode.
+        body = {"origin": msg["origin"], "destination": msg["destination"]}
+        if msg.get("arrival_time"):
+            body["arrival_time"] = msg["arrival_time"]
+        if msg.get("departure_time"):
+            body["departure_time"] = msg["departure_time"]
+
         def _call():
             with httpx.Client(timeout=15) as client:
                 resp = client.post(
                     f"{api_url}/api/actions/refresh-drive",
                     headers={"Authorization": f"Bearer {api_token}",
                              "Content-Type": "application/json"},
-                    json={"origin": msg["origin"], "destination": msg["destination"]},
+                    json=body,
                 )
                 return resp.json()
 
