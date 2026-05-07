@@ -230,7 +230,37 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/list_pending_proposals",
+    })
+    @websocket_api.async_response
+    async def ws_list_pending_proposals(hass, connection, msg):
+        """Return the schedule app's queue of pending agent proposals so
+        the card can fold them into its event list (REVIEW badges in
+        parity with the web schedule, fr-2026-05-07-d). The endpoint is
+        token-authed; the card never sees the bearer."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        def _call():
+            with httpx.Client(timeout=10) as client:
+                resp = client.get(
+                    f"{api_url}/api/data/pending-proposals",
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_agent_action)
     websocket_api.async_register_command(hass, ws_skip_week)
+    websocket_api.async_register_command(hass, ws_list_pending_proposals)
