@@ -242,6 +242,34 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "api_error", str(e))
 
     @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/list_review_inbox",
+    })
+    @websocket_api.async_response
+    async def ws_list_review_inbox(hass, connection, msg):
+        """Unified review inbox (groups + recurring_batches) the card's
+        review modal renders to mirror the web /review page. The card
+        polls this when the user taps the pending pill; it's heavier
+        than list_pending_proposals (involves rendering the payload)
+        so we keep it modal-driven, not part of the schedule render."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    f"{api_url}/api/data/review-inbox",
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+                return resp.json()
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/list_pending_proposals",
     })
     @websocket_api.async_response
@@ -270,8 +298,118 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    # ----- Review-queue WS commands (fr-2026-05-11-b) ---------------
+    # Each command is a thin pass-through to a /api/actions/* bearer
+    # endpoint on the Flask app. The drift-prevention test in the main
+    # app's tests/ suite walks both surfaces and fails CI when a new
+    # web review route lands without a matching command here. Bodies
+    # are intentionally similar so a refactor (e.g. extracting a
+    # `_post_with_token` helper) can collapse them later.
+    def _build_review_action_command(*, ws_type: str, http_path_tmpl: str,
+                                       msg_schema: dict | None = None,
+                                       body_keys: tuple[str, ...] = ()):
+        """Factory: returns an async websocket handler that POSTs to
+        `http_path_tmpl` (a `.format()`-style string fed by msg keys it
+        names) with an optional JSON body assembled from msg keys named
+        in `body_keys`. Keeps every command's wiring identical so the
+        drift-prevention test only needs to check that a command for
+        each route exists."""
+        schema = {
+            vol.Required("type"): ws_type,
+            **(msg_schema or {}),
+        }
+        @websocket_api.websocket_command(schema)
+        @websocket_api.async_response
+        async def _handler(hass, connection, msg):
+            try:
+                api_url, api_token = _get_api_config(hass)
+            except ValueError as e:
+                connection.send_error(msg["id"], "not_configured", str(e))
+                return
+            path = http_path_tmpl.format(**{
+                k: msg.get(k, "") for k in msg if k not in ("type", "id")
+            })
+            body = {k: msg[k] for k in body_keys if k in msg}
+            def _call():
+                with httpx.Client(timeout=15) as client:
+                    resp = client.post(
+                        f"{api_url}{path}",
+                        headers={"Authorization": f"Bearer {api_token}",
+                                 "Content-Type": "application/json"},
+                        json=body,
+                    )
+                    return resp.json()
+            try:
+                result = await hass.async_add_executor_job(_call)
+                connection.send_result(msg["id"], result)
+            except Exception as e:
+                connection.send_error(msg["id"], "api_error", str(e))
+        return _handler
+
+    ws_accept_event = _build_review_action_command(
+        ws_type="katja_schedule/accept_event",
+        http_path_tmpl="/api/actions/events/accept/{event_id}",
+        msg_schema={vol.Required("event_id"): str})
+    ws_hide_event = _build_review_action_command(
+        ws_type="katja_schedule/hide_event",
+        http_path_tmpl="/api/actions/events/hide/{event_id}",
+        msg_schema={vol.Required("event_id"): str})
+    ws_unhide_event = _build_review_action_command(
+        ws_type="katja_schedule/unhide_event",
+        http_path_tmpl="/api/actions/events/unhide/{event_id}",
+        msg_schema={vol.Required("event_id"): str})
+    ws_accept_all_new = _build_review_action_command(
+        ws_type="katja_schedule/accept_all_new",
+        http_path_tmpl="/api/actions/events/accept-all-new")
+    ws_hide_all_new = _build_review_action_command(
+        ws_type="katja_schedule/hide_all_new",
+        http_path_tmpl="/api/actions/events/hide-all-new")
+    ws_accept_all_changed = _build_review_action_command(
+        ws_type="katja_schedule/accept_all_changed",
+        http_path_tmpl="/api/actions/events/accept-all-changed")
+    ws_accept_batch = _build_review_action_command(
+        ws_type="katja_schedule/accept_batch",
+        http_path_tmpl="/api/actions/events/accept-batch",
+        msg_schema={vol.Required("event_ids"): [str]},
+        body_keys=("event_ids",))
+    ws_hide_batch = _build_review_action_command(
+        ws_type="katja_schedule/hide_batch",
+        http_path_tmpl="/api/actions/events/hide-batch",
+        msg_schema={vol.Required("event_ids"): [str]},
+        body_keys=("event_ids",))
+    ws_unhide_all = _build_review_action_command(
+        ws_type="katja_schedule/unhide_all",
+        http_path_tmpl="/api/actions/events/unhide-all")
+    ws_apply_proposal = _build_review_action_command(
+        ws_type="katja_schedule/apply_proposal",
+        http_path_tmpl="/api/actions/review/proposed/{pe_id}/apply",
+        msg_schema={vol.Required("pe_id"): str})
+    ws_reject_proposal = _build_review_action_command(
+        ws_type="katja_schedule/reject_proposal",
+        http_path_tmpl="/api/actions/review/proposed/{pe_id}/reject",
+        msg_schema={vol.Required("pe_id"): str})
+    ws_apply_proposals_batch = _build_review_action_command(
+        ws_type="katja_schedule/apply_proposals_batch",
+        http_path_tmpl="/api/actions/review/proposed/apply-batch",
+        msg_schema={vol.Required("proposal_ids"): [str]},
+        body_keys=("proposal_ids",))
+    ws_reject_proposals_batch = _build_review_action_command(
+        ws_type="katja_schedule/reject_proposals_batch",
+        http_path_tmpl="/api/actions/review/proposed/reject-batch",
+        msg_schema={vol.Required("proposal_ids"): [str]},
+        body_keys=("proposal_ids",))
+
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_agent_action)
     websocket_api.async_register_command(hass, ws_skip_week)
     websocket_api.async_register_command(hass, ws_list_pending_proposals)
+    websocket_api.async_register_command(hass, ws_list_review_inbox)
+    for _cmd in (
+        ws_accept_event, ws_hide_event, ws_unhide_event,
+        ws_accept_all_new, ws_hide_all_new, ws_accept_all_changed,
+        ws_accept_batch, ws_hide_batch, ws_unhide_all,
+        ws_apply_proposal, ws_reject_proposal,
+        ws_apply_proposals_batch, ws_reject_proposals_batch,
+    ):
+        websocket_api.async_register_command(hass, _cmd)
