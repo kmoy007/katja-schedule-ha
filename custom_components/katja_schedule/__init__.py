@@ -96,8 +96,13 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
     @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/refresh_drive",
-        vol.Required("origin"): str,
-        vol.Required("destination"): str,
+        # Either ({origin, destination}) OR ({event: {what, where}}).
+        # The backend parses the drive row when given an event, so the
+        # card doesn't have to ship its own regex (which drifted from
+        # the web parser; see bug-20260509-150030).
+        vol.Optional("origin"): str,
+        vol.Optional("destination"): str,
+        vol.Optional("event"): dict,
         vol.Optional("arrival_time"): str,
         vol.Optional("departure_time"): str,
     })
@@ -109,11 +114,17 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "not_configured", str(e))
             return
 
-        # Forward optional time params if present so the card can opt
-        # into arrive-by convergence (the web's default since
-        # 2026-05-05). Older cards still work — backend treats absent
-        # times as live mode.
-        body = {"origin": msg["origin"], "destination": msg["destination"]}
+        # Forward whichever shape the card sent. The backend accepts
+        # either {origin, destination} (legacy) or {event: {what, where}}
+        # (current). Optional time params let the card opt into
+        # arrive-by convergence (web default since 2026-05-05).
+        body: dict = {}
+        if msg.get("origin"):
+            body["origin"] = msg["origin"]
+        if msg.get("destination"):
+            body["destination"] = msg["destination"]
+        if msg.get("event"):
+            body["event"] = msg["event"]
         if msg.get("arrival_time"):
             body["arrival_time"] = msg["arrival_time"]
         if msg.get("departure_time"):
