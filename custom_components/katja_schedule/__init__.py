@@ -398,6 +398,44 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         http_path_tmpl="/api/actions/review/proposed/reject-batch",
         msg_schema={vol.Required("proposal_ids"): [str]},
         body_keys=("proposal_ids",))
+    ws_star_event = _build_review_action_command(
+        ws_type="katja_schedule/star_event",
+        http_path_tmpl="/api/actions/events/star",
+        msg_schema={
+            vol.Optional("event_id"): str,
+            vol.Required("date"): str,
+            vol.Optional("time"): str,
+            vol.Required("what"): str,
+            vol.Optional("who"): str,
+            vol.Required("starred"): bool,
+        },
+        body_keys=("event_id", "date", "time", "what", "who", "starred"))
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/list_starred_events",
+    })
+    @websocket_api.async_response
+    async def ws_list_starred_events(hass, connection, msg):
+        """Read-only feed of household-starred events in the next 6 months
+        — surfaces the Starred view on the HA card without duplicating
+        the overlay-fetch logic."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    f"{api_url}/api/data/starred-events",
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+                return resp.json()
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
 
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
@@ -405,11 +443,13 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_skip_week)
     websocket_api.async_register_command(hass, ws_list_pending_proposals)
     websocket_api.async_register_command(hass, ws_list_review_inbox)
+    websocket_api.async_register_command(hass, ws_list_starred_events)
     for _cmd in (
         ws_accept_event, ws_hide_event, ws_unhide_event,
         ws_accept_all_new, ws_hide_all_new, ws_accept_all_changed,
         ws_accept_batch, ws_hide_batch, ws_unhide_all,
         ws_apply_proposal, ws_reject_proposal,
         ws_apply_proposals_batch, ws_reject_proposals_batch,
+        ws_star_event,
     ):
         websocket_api.async_register_command(hass, _cmd)
