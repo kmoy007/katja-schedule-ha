@@ -401,15 +401,24 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     ws_star_event = _build_review_action_command(
         ws_type="katja_schedule/star_event",
         http_path_tmpl="/api/actions/events/star",
+        # `date` + `what` are required for single-mode (the composite-
+        # key path on the backend); for `mode: "series"` the backend
+        # only needs `recurring_event_id` + `starred` and looks up
+        # every future instance itself (app.py:_apply_star_series).
+        # Keep them all Optional here and let the backend reject
+        # malformed shapes so callers can use either path.
         msg_schema={
             vol.Optional("event_id"): str,
-            vol.Required("date"): str,
+            vol.Optional("date"): str,
             vol.Optional("time"): str,
-            vol.Required("what"): str,
+            vol.Optional("what"): str,
             vol.Optional("who"): str,
             vol.Required("starred"): bool,
+            vol.Optional("mode"): str,
+            vol.Optional("recurring_event_id"): str,
         },
-        body_keys=("event_id", "date", "time", "what", "who", "starred"))
+        body_keys=("event_id", "date", "time", "what", "who", "starred",
+                   "mode", "recurring_event_id"))
 
     @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/list_starred_events",

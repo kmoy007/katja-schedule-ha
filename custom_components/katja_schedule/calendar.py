@@ -127,6 +127,17 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
         ev_id = ev.get("event_id")
         if ev_id and ev_id in cal_by_id:
             cal_ev = cal_by_id[ev_id]
+            # bug-20260518-102639 / bb2dbad parity: when an overlay row
+            # was accept-promoted from a multi-day calendar event but
+            # `dt_end` didn't carry forward (older tool_accept_event
+            # paths, pre-73d54a7), fall back to the cache value so the
+            # downstream `_to_calendar_event` still sees the span. The
+            # web renderer applies the same fix at renderer.py:311 —
+            # without it, multi-day events accepted before the fix
+            # render as single-day in HA even though the underlying
+            # calendar event spans correctly.
+            if not row.get("dt_end") and cal_ev.get("dt_end"):
+                row["dt_end"] = cal_ev["dt_end"]
             diffs = _fields_differ(ev, cal_ev)
             if diffs:
                 hand_edited = set(ev.get("hand_edited_fields") or [])
@@ -223,6 +234,12 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         parts.append(f"DtEnd: {dt_end_str}")
     if ev.get("starred"):
         parts.append("Starred: 1")
+    # bug-20260512-211958: a recurring-event instance carries the
+    # parent series id so the card can prompt "Star all upcoming?"
+    # (mode: "series") instead of single-instance star — same UX the
+    # web has via tr.dataset.recurringEventId.
+    if ev.get("recurring_event_id"):
+        parts.append(f"RecurringEventId: {ev['recurring_event_id']}")
 
     return CalendarEvent(
         summary=summary,
