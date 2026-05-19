@@ -8,6 +8,14 @@ parse:
                        # | orphan | hidden_rule | hidden_oneoff
     Where: ...
     Flight: BA279 LAX→LHR
+    DtEnd: 2026-05-28  # inclusive last day for multi-day spans
+                       # (fr-2026-05-18-a / fr-2026-05-19-b — the card
+                       # uses this to fan the row across each spanned
+                       # day with italic/faded continuation styling)
+    Starred: 1         # household-starred toggle state (fr-2026-05-19
+                       # gap analysis — surfaces per-row star state so
+                       # the card can render a star indicator + an
+                       # accurate Star/Unstar button in the modal)
 
 Status mirrors renderer.py classification on the web app, so the HA card can
 show the same set of categories as the schedule UI (pending review,
@@ -16,7 +24,8 @@ cancelled/skipped, hidden-by-rule, hidden-one-off).
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
@@ -160,6 +169,29 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     except Exception:
         return None
 
+    # fr-2026-05-18-a / fr-2026-05-19-b: multi-day spanning events carry
+    # `dt_end` (inclusive last day per the overlay convention) so the web
+    # app can fan the row onto every day it covers. Mirror that here:
+    # extend the HA event's `end` to dt_end+1 day (HA all-day end is
+    # exclusive) so stock HA calendar cards render the full banner, and
+    # surface `DtEnd` in the description so the custom card can render
+    # italic/faded continuation rows on intermediate days.
+    dt_end_str = (ev.get("dt_end") or "").strip()
+    has_multi_day = bool(dt_end_str and dt_end_str > event_date)
+    if has_multi_day:
+        try:
+            end_d = date.fromisoformat(dt_end_str)
+            if isinstance(end, datetime):
+                # Timed event whose span crosses midnight into later
+                # days — anchor end at end-of-dt_end in Pacific so the
+                # banner length is correct.
+                end = datetime(end_d.year, end_d.month, end_d.day,
+                                23, 59, tzinfo=ZoneInfo("America/Los_Angeles"))
+            else:
+                end = end_d + timedelta(days=1)
+        except ValueError:
+            has_multi_day = False
+
     summary = ev.get("what", "") or ""
     if "drive" in summary.lower():
         summary = f"\U0001f697 {summary}"
@@ -187,6 +219,10 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # line so it's least obtrusive in stock HA calendar cards.
     if ev.get("event_id"):
         parts.append(f"EventId: {ev['event_id']}")
+    if has_multi_day:
+        parts.append(f"DtEnd: {dt_end_str}")
+    if ev.get("starred"):
+        parts.append("Starred: 1")
 
     return CalendarEvent(
         summary=summary,
