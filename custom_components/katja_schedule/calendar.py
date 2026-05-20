@@ -43,6 +43,11 @@ _LOGGER = logging.getLogger(__name__)
 # divergence between overlay and calendar cache marks an event as "changed".
 COMPARE_FIELDS = ("date", "time", "what", "where")
 
+# Mirror renderer.py:_MANUAL_EVENT_ID_PREFIX. Manual overlay rows get a
+# locally-generated `me-…` event_id (fr-2026-05-18-d) that by design has
+# no calendar-cache counterpart — so they must NEVER be tagged "orphan".
+_MANUAL_EVENT_ID_PREFIX = "me-"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -147,7 +152,15 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
                 )
             else:
                 row["status"] = "calendar"
-        elif ev_id and have_sync:
+        elif (ev_id and have_sync
+              and not ev_id.startswith(_MANUAL_EVENT_ID_PREFIX)):
+            # The overlay points at a calendar event_id that's no longer
+            # in the cache (renamed or deleted upstream) → orphan. But a
+            # locally-generated `me-…` id NEVER has a cache counterpart
+            # by design, so it can't legitimately be orphaned — mirrors
+            # renderer.py:329. Without this guard, every manually-added
+            # row showed as ORPHAN on the HA card while the web view
+            # (which has the guard) showed them clean.
             row["status"] = "orphan"
         else:
             row["status"] = "manual" if ev.get("source") == "manual" else "calendar"
