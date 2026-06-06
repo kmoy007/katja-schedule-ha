@@ -153,14 +153,19 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
             else:
                 row["status"] = "calendar"
         elif (ev_id and have_sync
-              and not ev_id.startswith(_MANUAL_EVENT_ID_PREFIX)):
+              and not ev_id.startswith(_MANUAL_EVENT_ID_PREFIX)
+              and ev.get("source") != "manual"):
             # The overlay points at a calendar event_id that's no longer
-            # in the cache (renamed or deleted upstream) → orphan. But a
-            # locally-generated `me-…` id NEVER has a cache counterpart
-            # by design, so it can't legitimately be orphaned — mirrors
-            # renderer.py:329. Without this guard, every manually-added
-            # row showed as ORPHAN on the HA card while the web view
-            # (which has the guard) showed them clean.
+            # in the cache (renamed or deleted upstream) → orphan. But
+            # locally-owned rows can never legitimately be orphaned: a
+            # `me-…` id has no cache counterpart by design (else every
+            # manually-added row showed as ORPHAN on the card while the
+            # web view showed them clean), and any `source == "manual"`
+            # row — e.g. an auto-updating live-flight tracking row with a
+            # `live-{NUMBER}-{date}` id — was never a calendar event
+            # (bug-20260605-184129). Textual mirror of
+            # renderer.is_orphan_row; both sides are pinned by
+            # tests/test_ha_review_parity.py so this can't drift again.
             row["status"] = "orphan"
         else:
             row["status"] = "manual" if ev.get("source") == "manual" else "calendar"
