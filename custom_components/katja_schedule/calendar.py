@@ -112,6 +112,24 @@ def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
     return False
 
 
+def _settled_handedit_fields(ev: dict, cal_ev: dict) -> list[str]:
+    """Hand-edited fields whose calendar value still equals the value
+    recorded when the edit was made (`hand_edit_base`, written by the web
+    app's update tool). Mirrors renderer.settled_handedit_fields."""
+    base = ev.get("hand_edit_base") or {}
+    if not isinstance(base, dict) or not base:
+        return []
+    hand_edited = set(ev.get("hand_edited_fields") or [])
+    out = []
+    for f in COMPARE_FIELDS:
+        if f not in hand_edited or f not in base:
+            continue
+        if _normalize_for_diff(base.get(f) or "") == \
+                _normalize_for_diff(cal_ev.get(f) or ""):
+            out.append(f)
+    return out
+
+
 def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
     """Return all events tagged with status. Mirrors renderer.py except it
     also emits hidden categories so the card can reveal them under a toggle."""
@@ -144,6 +162,16 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
             if not row.get("dt_end") and cal_ev.get("dt_end"):
                 row["dt_end"] = cal_ev["dt_end"]
             diffs = _fields_differ(ev, cal_ev)
+            # bug-20260903-163044 parity: a hand-edited field whose
+            # calendar value hasn't moved since the edit is the user's
+            # own settled decision, not a conflict. Textual mirror of
+            # renderer.settled_handedit_fields (the web side records the
+            # calendar value at edit time under `hand_edit_base`); pinned
+            # by tests/test_ha_review_parity.py so the card's review
+            # count can't drift from /review.
+            settled = _settled_handedit_fields(ev, cal_ev)
+            if settled:
+                diffs = [f for f in diffs if f not in settled]
             if diffs:
                 hand_edited = set(ev.get("hand_edited_fields") or [])
                 row["status"] = (
