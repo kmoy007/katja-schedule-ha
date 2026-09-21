@@ -1,4 +1,12 @@
-"""DataUpdateCoordinator for Katja Schedule — polls the /api/data endpoint."""
+"""DataUpdateCoordinator for Katja Schedule — polls the /api/data endpoint.
+
+Polls are conditional GETs (see fetch.py): the server's ETag ignores its
+5-minute heartbeat fields, so an unchanged schedule answers 304 with no
+body and we keep the cached snapshot, topping up `last_sync` /
+`last_cron` / `build_version` from the 2 KB /api/data/status. Cut the
+integration's share of the app's egress from ~59 MB/day to a few MB
+(2026-09-21 bandwidth investigation).
+"""
 from __future__ import annotations
 
 import logging
@@ -9,18 +17,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
+from .fetch import SnapshotFetcher
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _sync_fetch(api_url: str, api_token: str) -> dict:
+def _sync_fetch(fetcher: SnapshotFetcher) -> dict:
     """Blocking HTTP fetch — run via async_add_executor_job to avoid
     SSL cert loading on the event loop."""
-    headers = {"Authorization": f"Bearer {api_token}"}
     with httpx.Client(timeout=30) as client:
-        resp = client.get(f"{api_url}/api/data", headers=headers)
-        resp.raise_for_status()
-    return resp.json()
+        return fetcher.fetch(client)
 
 
 class KatjaScheduleCoordinator(DataUpdateCoordinator):
@@ -39,11 +45,12 @@ class KatjaScheduleCoordinator(DataUpdateCoordinator):
         )
         self._api_url = api_url.rstrip("/")
         self._api_token = api_token
+        self._fetcher = SnapshotFetcher(self._api_url, api_token)
 
     async def _async_update_data(self) -> dict:
         try:
             data = await self.hass.async_add_executor_job(
-                _sync_fetch, self._api_url, self._api_token,
+                _sync_fetch, self._fetcher,
             )
         except httpx.HTTPStatusError as exc:
             raise UpdateFailed(
