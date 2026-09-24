@@ -85,6 +85,19 @@ def _fields_differ(a: dict, b: dict) -> list[str]:
     ]
 
 
+# Local copy of rules.SCHOOL_CALENDAR_KEYWORDS — the integration ships
+# standalone. tests/test_ha_classify.py asserts the two tuples are equal.
+SCHOOL_CALENDAR_KEYWORDS = (
+    "school", "academy", "elementary", "kindergarten", "preschool",
+    "k-12", "k12", "pta", "ptsa", "college", "university",
+)
+
+
+def _calendar_looks_like_school(label: str | None) -> bool:
+    text = (label or "").strip().lower()
+    return bool(text) and any(k in text for k in SCHOOL_CALENDAR_KEYWORDS)
+
+
 def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
     """Local copy of rules.pruning_pattern_matches — the integration ships
     standalone so it can't import the web app's modules. Behaviour must match
@@ -274,6 +287,12 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         )
     if ev.get("calendar_label"):
         parts.append(f"Source: {ev['calendar_label']}")
+        # Card-only: "Kind: school" lets the hide menu default a new
+        # rule's horizon to end of school year. Same keyword list as
+        # rules.calendar_looks_like_school (tests/test_ha_classify.py
+        # keeps the two copies equal).
+        if _calendar_looks_like_school(ev["calendar_label"]):
+            parts.append("Kind: school")
     # Card-only: surface the overlay event_id so the card's detail-sheet
     # actions (hide menu, star, review) can address the row through the
     # katja_schedule/* WS commands. HA's CalendarEvent doesn't
