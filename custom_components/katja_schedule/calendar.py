@@ -89,15 +89,20 @@ def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
     """Local copy of rules.pruning_pattern_matches — the integration ships
     standalone so it can't import the web app's modules. Behaviour must match
     the server side: contains/exact/starts_with on `what`, optional source
-    scoping by calendar_label."""
+    scoping by calendar_label, optional `until` (the rule only covers
+    events dated on or before that ISO day)."""
     what = (ev.get("what") or "").lower()
     label = ev.get("calendar_label") or ""
+    ev_date = ev.get("date") or ""
     for r in rules or []:
         pat = (r.get("pattern") or "").strip().lower()
         if not pat:
             continue
         sources = r.get("sources") or []
         if sources and label not in sources:
+            continue
+        until = r.get("until") or ""
+        if isinstance(until, str) and until.strip() and ev_date > until.strip():
             continue
         mode = r.get("match_mode") or "contains"
         if mode == "exact":
@@ -269,8 +274,9 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         )
     if ev.get("calendar_label"):
         parts.append(f"Source: {ev['calendar_label']}")
-    # Card-only: surface the overlay event_id so the Skip-this-week button
-    # can POST to /api/actions/skip-week/<id>. HA's CalendarEvent doesn't
+    # Card-only: surface the overlay event_id so the card's detail-sheet
+    # actions (hide menu, star, review) can address the row through the
+    # katja_schedule/* WS commands. HA's CalendarEvent doesn't
     # expose ids in the calendar API response, and stuffing it into the
     # description is the same pattern Who/Status/Source already use. Last
     # line so it's least obtrusive in stock HA calendar cards.

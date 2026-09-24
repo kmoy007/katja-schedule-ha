@@ -212,26 +212,84 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    # "Skip this week" (katja_schedule/skip_week) was removed 2026-09-23
+    # along with the web and iOS buttons — the hide menu replaced it.
+
+    _RULE_BODY_SCHEMA = {
+        vol.Required("pattern"): str,
+        vol.Optional("match_mode"): str,
+        vol.Optional("sources"): [str],
+        vol.Optional("until"): str,
+        vol.Optional("reason"): str,
+    }
+
+    def _rule_body(connection, msg, *keys) -> dict:
+        """JSON body for the pruning-rule endpoints. Forwards the HA
+        user's name as ``by`` so the rule records who decided it — the
+        bearer token alone only says "the wall display"."""
+        body = {k: msg[k] for k in keys if k in msg}
+        user = getattr(connection, "user", None)
+        name = getattr(user, "name", "") or ""
+        if name:
+            body["by"] = name
+        return body
+
     @websocket_api.websocket_command({
-        vol.Required("type"): "katja_schedule/skip_week",
-        vol.Required("event_id"): str,
+        vol.Required("type"): "katja_schedule/preview_pruning_rule",
+        **_RULE_BODY_SCHEMA,
     })
     @websocket_api.async_response
-    async def ws_skip_week(hass, connection, msg):
-        """Skip this occurrence for the week — same idempotent rewrite the
-        web app's ⚠️ Skip-this-week button does, but reachable from the card
-        without needing a browser session."""
+    async def ws_preview_pruning_rule(hass, connection, msg):
+        """How many upcoming events a rule would hide, with a sample —
+        the card's hide menu shows this before asking for confirmation."""
         try:
             api_url, api_token = _get_api_config(hass)
         except ValueError as e:
             connection.send_error(msg["id"], "not_configured", str(e))
             return
+        body = _rule_body(connection, msg, "pattern", "match_mode", "sources", "until")
 
         def _call():
             with httpx.Client(timeout=15) as client:
                 resp = client.post(
-                    f"{api_url}/api/actions/skip-week/{msg['event_id']}",
-                    headers={"Authorization": f"Bearer {api_token}"},
+                    f"{api_url}/api/actions/pruning-rules/preview",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/add_pruning_rule",
+        vol.Optional("also_hide_event_id"): str,
+        **_RULE_BODY_SCHEMA,
+    })
+    @websocket_api.async_response
+    async def ws_add_pruning_rule(hass, connection, msg):
+        """Create a standing pruning rule from the card's hide menu and
+        hide everything it matches now. Same server helper as the web
+        sheet and iOS."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+        body = _rule_body(connection, msg, "pattern", "match_mode", "sources",
+                          "until", "reason", "also_hide_event_id")
+
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    f"{api_url}/api/actions/pruning-rules/add",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json=body,
                 )
                 return resp.json()
 
@@ -449,7 +507,8 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_agent_action)
-    websocket_api.async_register_command(hass, ws_skip_week)
+    websocket_api.async_register_command(hass, ws_preview_pruning_rule)
+    websocket_api.async_register_command(hass, ws_add_pruning_rule)
     websocket_api.async_register_command(hass, ws_list_pending_proposals)
     websocket_api.async_register_command(hass, ws_list_review_inbox)
     websocket_api.async_register_command(hass, ws_list_starred_events)
