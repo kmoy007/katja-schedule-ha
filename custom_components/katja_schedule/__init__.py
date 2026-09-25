@@ -184,6 +184,51 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "api_error", str(e))
 
     @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/plan_pickup",
+        vol.Required("event_id"): str,
+        vol.Required("outcome"): vol.In(["drive", "taxi", "no_pickup"]),
+        vol.Optional("driver"): str,
+    })
+    @websocket_api.async_response
+    async def ws_plan_pickup(hass, connection, msg):
+        """Settle "who is collecting them?" from the wall card.
+
+        bug-20260925-113137: the chat agent only asks this inside a chat
+        turn, so an arrival that arrived by calendar sync was never asked
+        about. The card is the surface the household actually walks past,
+        so it needs the manual door as much as the phone does.
+
+        Routed through the bearer endpoint like every other card action, so
+        the API token stays in HA's encrypted config and never reaches the
+        card's YAML. The arithmetic is entirely server-side.
+        """
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        body = {"event_id": msg["event_id"], "outcome": msg["outcome"]}
+        if msg.get("driver"):
+            body["driver"] = msg["driver"]
+
+        def _call():
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(
+                    f"{api_url}/api/actions/events/plan-pickup",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/agent_action",
         vol.Required("message"): str,
     })
@@ -506,6 +551,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
+    websocket_api.async_register_command(hass, ws_plan_pickup)
     websocket_api.async_register_command(hass, ws_agent_action)
     websocket_api.async_register_command(hass, ws_preview_pruning_rule)
     websocket_api.async_register_command(hass, ws_add_pruning_rule)
