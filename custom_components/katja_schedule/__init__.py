@@ -229,6 +229,43 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "api_error", str(e))
 
     @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/log_interactions",
+        vol.Required("events"): [dict],
+    })
+    @websocket_api.async_response
+    async def ws_log_interactions(hass, connection, msg):
+        """Forward the card's batched interaction counts (fr-2026-09-26-a).
+
+        Counts only — affordance / row kind / outcome slugs, no titles or
+        ids; the server validates the shape and stamps the surface. The
+        card never holds the token, so it comes through here like every
+        other card action. Best-effort: a failure is reported to the card,
+        which ignores it."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        body = {"surface": "ha-card", "events": msg["events"][:50]}
+
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    f"{api_url}/api/actions/interactions",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/agent_action",
         vol.Required("message"): str,
     })
@@ -552,6 +589,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_plan_pickup)
+    websocket_api.async_register_command(hass, ws_log_interactions)
     websocket_api.async_register_command(hass, ws_agent_action)
     websocket_api.async_register_command(hass, ws_preview_pruning_rule)
     websocket_api.async_register_command(hass, ws_add_pruning_rule)
