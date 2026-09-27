@@ -8,6 +8,10 @@ parse:
                        # | orphan | hidden_rule | hidden_oneoff
     Where: ...
     Flight: BA279 LAX→LHR
+    Pickup: drive:Katja # the household's answer to "who is collecting
+                       # them?" — `taxi`, `no_pickup`, or `drive:<name>`.
+                       # The card highlights the chosen chip instead of
+                       # showing four identical ones.
     DtEnd: 2026-05-28  # inclusive last day for multi-day spans
                        # (fr-2026-05-18-a / fr-2026-05-19-b — the card
                        # uses this to fan the row across each spanned
@@ -285,6 +289,23 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
             f"Flight: {f.get('number','')} "
             f"{f.get('origin','')}→{f.get('destination','')}"
         )
+    # Card-only: the household's current answer to "who is collecting
+    # them?" (app._settle_pickup writes `pickup` on the overlay row; it
+    # is deliberately outside renderer.COMPARE_FIELDS so a calendar sync
+    # leaves it alone). Without it the card renders four identical chips
+    # and a mis-tap is invisible — the web sheet has highlighted the
+    # chosen one since 2026-09-26, and the card is the surface the
+    # household actually walks past.
+    pickup = ev.get("pickup") or {}
+    if isinstance(pickup, dict) and pickup.get("outcome"):
+        outcome = str(pickup["outcome"])
+        driver = str(pickup.get("driver") or "")
+        # `drive` without a driver is not an answer the card can
+        # highlight (no chip matches), so it is not worth a line.
+        if outcome != "drive":
+            parts.append(f"Pickup: {outcome}")
+        elif driver:
+            parts.append(f"Pickup: drive:{driver}")
     if ev.get("calendar_label"):
         parts.append(f"Source: {ev['calendar_label']}")
         # Card-only: "Kind: school" lets the hide menu default a new
