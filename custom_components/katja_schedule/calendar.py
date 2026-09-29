@@ -7,6 +7,7 @@ parse:
     Status: new        # calendar | manual | new | changed | conflict
                        # | orphan | hidden_rule | hidden_oneoff
     Where: ...
+    Notes: the event's own commentary, one line
     Flight: BA279 LAX→LHR
     Pickup: drive:Katja # the household's answer to "who is collecting
                        # them?" — `taxi`, `no_pickup`, or `drive:<name>`.
@@ -238,6 +239,12 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
     return rows
 
 
+# How much of an event's commentary the card shows. Long enough for a real
+# note, short enough that a forwarded email body doesn't ride along on every
+# event in a 35-day window.
+_NOTES_MAX_CHARS = 400
+
+
 def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     event_date = ev.get("date", "")
     time_str = ev.get("time", "")
@@ -283,6 +290,21 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         parts.append(f"Status: {status}")
     if ev.get("where"):
         parts.append(f"Where: {ev['where']}")
+    # The card's Details row used to print this whole metadata block
+    # verbatim — the household read "Status: calendar", "Source: …" and a
+    # 200-character Google event id (seen on the wall display 2026-09-29).
+    # The one part of it worth reading is the event's own commentary, which
+    # wasn't here at all. Flattened to a single line because the format is
+    # line-based (`Key: value`) and a multi-line note would parse as junk
+    # keys, and capped because a forwarded email body would otherwise ride
+    # along on every event: the longest note in the live calendar today is
+    # 947 characters.
+    notes = (ev.get("notes") or "").strip()
+    if notes:
+        flat = " · ".join(ln.strip() for ln in notes.splitlines() if ln.strip())
+        if len(flat) > _NOTES_MAX_CHARS:
+            flat = flat[:_NOTES_MAX_CHARS - 1].rstrip() + "…"
+        parts.append(f"Notes: {flat}")
     if ev.get("flight"):
         f = ev["flight"]
         parts.append(
