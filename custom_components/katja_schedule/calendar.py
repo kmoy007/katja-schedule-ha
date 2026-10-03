@@ -4,6 +4,9 @@ Each event carries metadata in its ``description`` for the custom card to
 parse:
 
     Who: Katja
+    Person: katja      # the person the card colours the row by: the first
+                       # word of Who when it names a household member
+                       # (renderer.person_key); no line when it names nobody
     Status: new        # calendar | manual | new | changed | conflict
                        # | orphan | hidden_rule | hidden_oneoff
     Where: ...
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime, timedelta
+from itertools import groupby
 from zoneinfo import ZoneInfo
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
@@ -103,6 +107,20 @@ SCHOOL_CALENDAR_KEYWORDS = (
 def _calendar_looks_like_school(label: str | None) -> bool:
     text = (label or "").strip().lower()
     return bool(text) and any(k in text for k in SCHOOL_CALENDAR_KEYWORDS)
+
+
+# Local copy of renderer.PEOPLE and renderer.person_key — the integration
+# ships standalone. tests/test_person_key.py checks the tuples are equal and
+# runs both over tests/person_key_cases.json.
+_PEOPLE = ("katja", "caleb", "sam", "ken", "kids", "family")
+
+
+def _person_key(who: str | None) -> str:
+    """The first word of `who`, as a whole word, ignoring case, when it
+    names a household member; otherwise ""."""
+    runs = groupby(str(who or "").lower(), str.isalpha)
+    first = next(("".join(run) for is_letter, run in runs if is_letter), "")
+    return first if first in _PEOPLE else ""
 
 
 def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
@@ -287,6 +305,9 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     parts: list[str] = []
     if ev.get("who"):
         parts.append(f"Who: {ev['who']}")
+        person = _person_key(ev["who"])
+        if person:
+            parts.append(f"Person: {person}")
     status = ev.get("status", "")
     if status:
         parts.append(f"Status: {status}")
