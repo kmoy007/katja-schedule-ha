@@ -13,6 +13,8 @@ parse:
                        # them?" — `taxi`, `no_pickup`, or `drive:<name>`.
                        # The card highlights the chosen chip instead of
                        # showing four identical ones.
+    Live: 1            # the poller's live-status copy of a delayed flight;
+                       # the card offers no pickup chips on it.
     DtEnd: 2026-05-28  # inclusive last day for multi-day spans
                        # (fr-2026-05-18-a / fr-2026-05-19-b — the card
                        # uses this to fan the row across each spanned
@@ -317,7 +319,9 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # leaves it alone). Without it the card renders four identical chips
     # and a mis-tap is invisible — the web sheet has highlighted the
     # chosen one since 2026-09-26, and the card is the surface the
-    # household actually walks past.
+    # household actually walks past. The server sends only an answer that
+    # still holds (a drive whose 🚗 row was rejected or removed arrives
+    # with no `pickup`), so this line is never a stale highlight.
     pickup = ev.get("pickup") or {}
     if isinstance(pickup, dict) and pickup.get("outcome"):
         outcome = str(pickup["outcome"])
@@ -328,6 +332,12 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
             parts.append(f"Pickup: {outcome}")
         elif driver:
             parts.append(f"Pickup: drive:{driver}")
+    # Card-only: the poller's live-status copy of a delayed flight (the
+    # server's `live_flight` flag on the row). It is deleted when the delay
+    # clears, so the card asks "who is collecting them?" on the flight's
+    # own row instead, and the server refuses an answer here.
+    if ev.get("live_flight"):
+        parts.append("Live: 1")
     if ev.get("calendar_label"):
         parts.append(f"Source: {ev['calendar_label']}")
         # Card-only: "Kind: school" lets the hide menu default a new
