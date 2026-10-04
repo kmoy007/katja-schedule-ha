@@ -435,7 +435,13 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         """Return the schedule app's queue of pending agent proposals so
         the card can fold them into its event list (REVIEW badges in
         parity with the web schedule, fr-2026-05-07-d). The endpoint is
-        token-authed; the card never sees the bearer."""
+        token-authed; the card never sees the bearer.
+
+        Each proposal carries `source`, `unverified` and `reason` (the
+        server's `mobile_bootstrap.proposal_provenance`), which the card's
+        sheet prints beside Apply. The reply is relayed unchanged, as
+        `list_review_inbox`'s is: a filter here would drop the warning for
+        mail a stranger sent to the inbox."""
         try:
             api_url, api_token = _get_api_config(hass)
         except ValueError as e:
