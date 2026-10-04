@@ -88,6 +88,21 @@ def _get_api_config(hass: HomeAssistant) -> tuple[str, str]:
     raise ValueError("No katja_schedule config entry found")
 
 
+async def _refresh_schedule(hass: HomeAssistant) -> None:
+    """Re-read the schedule now, after a command that changed it.
+
+    The card reads its events off the calendar entity, which serves the
+    coordinator's last snapshot. Without this a hide made on the card
+    stayed on the wall, through a dashboard reload too, until the next
+    poll, up to DEFAULT_SCAN_INTERVAL later. Awaited before the command
+    answers, so the card's re-read after the answer sees the change. The
+    poll is conditional (fetch.py): a change that moved nothing costs a
+    304. `async_refresh` logs a failed poll rather than raising, so it
+    never turns a change that happened into an error."""
+    for coordinator in list(hass.data.get(DOMAIN, {}).values()):
+        await coordinator.async_refresh()
+
+
 def _register_ws_commands(hass: HomeAssistant) -> None:
     global _ws_registered
     if _ws_registered:
@@ -224,6 +239,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
         try:
             result = await hass.async_add_executor_job(_call)
+            await _refresh_schedule(hass)
             connection.send_result(msg["id"], result)
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
@@ -290,6 +306,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
         try:
             result = await hass.async_add_executor_job(_call)
+            await _refresh_schedule(hass)
             connection.send_result(msg["id"], result)
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
@@ -377,6 +394,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
         try:
             result = await hass.async_add_executor_job(_call)
+            await _refresh_schedule(hass)
             connection.send_result(msg["id"], result)
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
@@ -453,7 +471,8 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         names) with an optional JSON body assembled from msg keys named
         in `body_keys`. Keeps every command's wiring identical so the
         drift-prevention test only needs to check that a command for
-        each route exists."""
+        each route exists. Every one of them changes the schedule, so
+        each re-reads it before answering (`_refresh_schedule`)."""
         schema = {
             vol.Required("type"): ws_type,
             **(msg_schema or {}),
@@ -481,6 +500,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
                     return resp.json()
             try:
                 result = await hass.async_add_executor_job(_call)
+                await _refresh_schedule(hass)
                 connection.send_result(msg["id"], result)
             except Exception as e:
                 connection.send_error(msg["id"], "api_error", str(e))

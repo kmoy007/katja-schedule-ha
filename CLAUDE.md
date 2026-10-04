@@ -16,6 +16,7 @@ It must stay aligned with the main web app at `kmoy007/katja-schedule`.
 - **Auto-clean orphaned entities** on startup from previous installs.
 - **HTTP calls on the executor thread** — use `hass.async_add_executor_job()`, never `httpx.AsyncClient` directly (causes SSL blocking on HA event loop).
 - **WebSocket commands** proxy API calls so the bearer token stays in HA's encrypted config, never in card YAML.
+- **A command that changes the schedule awaits `_refresh_schedule(hass)` before it answers.** The card reads events off the calendar entity, which serves the coordinator's last snapshot; without the re-read a hide stayed on the wall, through a dashboard reload too, until the next 5-minute poll (2026-10-03). `tests/test_ha_ws_refresh.py` runs every registered command and fails on one it hasn't been told changes the schedule or only reads.
 
 ## Versioning
 
