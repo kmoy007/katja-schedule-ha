@@ -36,5 +36,5 @@ It must stay aligned with the main web app at `kmoy007/katja-schedule`.
 - `calendar.py` — Calendar entities per family member, auto-discovered
 - `sensor.py` — Pending review, next flight, last sync sensors
 - `config_flow.py` — Setup UI, API validation, member auto-discovery
-- `time_parser.py` — Ported from the web app's `ical_feed.py`
+- `time_parser.py` — A port of the web app's `ical_feed.clock_span`; the main repo's `tests/time_span_cases.json` holds the two (and the web's day grid) to one table, so change them together
 - `const.py` — Constants, `stable_id()` helper
