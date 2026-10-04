@@ -9,6 +9,7 @@ integration's share of the app's egress from ~59 MB/day to a few MB
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -46,18 +47,28 @@ class KatjaScheduleCoordinator(DataUpdateCoordinator):
         self._api_url = api_url.rstrip("/")
         self._api_token = api_token
         self._fetcher = SnapshotFetcher(self._api_url, api_token)
+        # One fetch at a time. A card command re-reads the schedule right
+        # after a change (__init__._refresh_schedule) while a scheduled poll
+        # may already be in flight, and HA keeps whichever result lands
+        # last: a poll that read the server before the change and finished
+        # after the re-read put the hidden row back for five minutes.
+        # Serialized, the later fetch also reads later, and a poll and a
+        # re-read never write the fetcher's ETag and cache at once (a fetch
+        # cancelled at unload may still finish in its thread).
+        self._fetch_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> dict:
-        try:
-            data = await self.hass.async_add_executor_job(
-                _sync_fetch, self._fetcher,
-            )
-        except httpx.HTTPStatusError as exc:
-            raise UpdateFailed(
-                f"HTTP {exc.response.status_code} from schedule API"
-            ) from exc
-        except Exception as exc:
-            raise UpdateFailed(f"Failed to reach schedule API: {exc}") from exc
+        async with self._fetch_lock:
+            try:
+                data = await self.hass.async_add_executor_job(
+                    _sync_fetch, self._fetcher,
+                )
+            except httpx.HTTPStatusError as exc:
+                raise UpdateFailed(
+                    f"HTTP {exc.response.status_code} from schedule API"
+                ) from exc
+            except Exception as exc:
+                raise UpdateFailed(f"Failed to reach schedule API: {exc}") from exc
 
         if not data.get("ok"):
             raise UpdateFailed(f"API returned error: {data.get('error', 'unknown')}")

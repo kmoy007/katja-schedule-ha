@@ -16,7 +16,7 @@ It must stay aligned with the main web app at `kmoy007/katja-schedule`.
 - **Auto-clean orphaned entities** on startup from previous installs.
 - **HTTP calls on the executor thread** — use `hass.async_add_executor_job()`, never `httpx.AsyncClient` directly (causes SSL blocking on HA event loop).
 - **WebSocket commands** proxy API calls so the bearer token stays in HA's encrypted config, never in card YAML.
-- **A command that changes the schedule awaits `_refresh_schedule(hass)` before it answers.** The card reads events off the calendar entity, which serves the coordinator's last snapshot; without the re-read a hide stayed on the wall, through a dashboard reload too, until the next 5-minute poll (2026-10-03). `tests/test_ha_ws_refresh.py` runs every registered command and fails on one it hasn't been told changes the schedule or only reads.
+- **A command that changes the schedule awaits `_refresh_schedule(hass)` before it answers.** The card reads events off the calendar entity, which serves the coordinator's last snapshot; without the re-read a hide stayed on the wall, through a dashboard reload too, until the next 5-minute poll (2026-10-03). `tests/test_ha_ws_refresh.py` runs every registered command and fails on one it hasn't been told changes the schedule or only reads. **Keep the coordinator's `_fetch_lock`:** HA keeps whichever fetch lands last, so without it a scheduled poll that read the server before the change could land after the re-read and put the row back (the same file runs that race with real threads).
 
 ## Versioning
 
@@ -32,7 +32,7 @@ It must stay aligned with the main web app at `kmoy007/katja-schedule`.
 ## Files
 
 - `__init__.py` — Entry point, entity cleanup, WebSocket command registration
-- `coordinator.py` — DataUpdateCoordinator, polls `/api/data`
+- `coordinator.py` — DataUpdateCoordinator, polls `/api/data`, one fetch at a time
 - `calendar.py` — Calendar entities per family member, auto-discovered
 - `sensor.py` — Pending review, next flight, last sync sensors
 - `config_flow.py` — Setup UI, API validation, member auto-discovery
