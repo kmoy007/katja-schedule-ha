@@ -12,6 +12,10 @@ parse:
     Where: ...
     Notes: the event's own commentary, one line
     Flight: BA279 LAX→LHR
+    Title: Uber to airport  # the row's own title, only when the summary
+                       # shows it with a 🚗 the title doesn't carry: a
+                       # hide rule the card makes from the row must match
+                       # the title, not the summary
     Pickup: drive:Katja # the household's answer to "who is collecting
                        # them?" — `taxi`, `no_pickup`, or `drive:<name>`.
                        # The card highlights the chosen chip instead of
@@ -404,6 +408,13 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # web has via tr.dataset.recurringEventId.
     if ev.get("recurring_event_id"):
         parts.append(f"RecurringEventId: {ev['recurring_event_id']}")
+    # Card-only: the row's own title when the summary above gave it a 🚗.
+    # The card's hide menu makes a rule from the title ("hide every …"),
+    # and the server matches a rule against the stored title, so a rule
+    # made from the summary ("🚗 Uber to airport") would never match again.
+    what = ev.get("what", "") or ""
+    if summary != what:
+        parts.append(f"Title: {what}")
 
     return CalendarEvent(
         summary=summary,
