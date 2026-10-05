@@ -123,6 +123,20 @@ def _person_key(who: str | None) -> str:
     return first if first in _PEOPLE else ""
 
 
+# Local copy of renderer.is_drive_row — the integration ships standalone.
+# tests/test_ha_card_drive_row.py runs it, the server's and the card's over
+# tests/drive_row_cases.json.
+_DRIVE_MARK_RE = _re.compile("^\\s*\U0001F697")
+_DRIVE_WORDS_RE = _re.compile(r"\b(drive|driving|taxi|uber|lyft|rideshare|cab)\b", _re.I)
+
+
+def _is_drive_row(what: str | None) -> bool:
+    """Whether a row is a drive row: a leading 🚗 (the household's
+    convention) or a transport word."""
+    text = str(what or "")
+    return bool(_DRIVE_MARK_RE.match(text) or _DRIVE_WORDS_RE.search(text))
+
+
 def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
     """Local copy of rules.pruning_pattern_matches — the integration ships
     standalone so it can't import the web app's modules. Behaviour must match
@@ -298,8 +312,13 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         except ValueError:
             has_multi_day = False
 
+    # A drive row's summary carries one 🚗, as the web's list shows it
+    # (renderer.drive_row_label): the card reads a drive row off it
+    # (`_isDrive`), and a stock HA calendar shows it. By the server's rule,
+    # so "Uber to airport" gets one, "🚗 Drive → LAX" doesn't get a second
+    # and "Overdrive" none.
     summary = ev.get("what", "") or ""
-    if "drive" in summary.lower():
+    if _is_drive_row(summary) and "\U0001F697" not in summary:
         summary = f"\U0001f697 {summary}"
 
     parts: list[str] = []
