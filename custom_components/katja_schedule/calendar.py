@@ -30,6 +30,10 @@ parse:
                        # gap analysis — surfaces per-row star state so
                        # the card can render a star indicator + an
                        # accurate Star/Unstar button in the modal)
+    Drive: none        # the sheet offers no Drive time: the server lists
+                       # the event's place in /api/data's
+                       # `no_drive_places` (home, a place still TBC, three
+                       # characters or fewer; drive_time.drive_time_offered)
 
 Status mirrors renderer.py classification on the web app, so the HA card can
 show the same set of categories as the schedule UI (pending review,
@@ -402,6 +406,11 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         parts.append(f"DtEnd: {dt_end_str}")
     if ev.get("starred"):
         parts.append("Starred: 1")
+    # Card-only: the server says the sheet offers no Drive time to this
+    # place (_all_rows reads it off /api/data's `no_drive_places`), so the
+    # card keeps no copy of the rule.
+    if ev.get("no_drive"):
+        parts.append("Drive: none")
     # bug-20260512-211958: a recurring-event instance carries the
     # parent series id so the card can prompt "Star all upcoming?"
     # (mode: "series") instead of single-instance star — same UX the
@@ -457,7 +466,14 @@ class KatjaScheduleCalendar(CoordinatorEntity, CalendarEntity):
             return []
         overlay = self.coordinator.data.get("overlay", {}) or {}
         cal_cache = self.coordinator.data.get("calendar_cache", {}) or {}
-        return _classify_events(overlay, cal_cache)
+        rows = _classify_events(overlay, cal_cache)
+        # The places the server offers no Drive time for (an older server
+        # sends none, and the card falls back to its own length check).
+        no_drive = set(self.coordinator.data.get("no_drive_places") or [])
+        for row in rows:
+            if str(row.get("where") or "").strip() in no_drive:
+                row["no_drive"] = True
+        return rows
 
     @staticmethod
     def _ts(d) -> float:
