@@ -54,7 +54,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, CONF_API_URL, stable_id
 from .coordinator import KatjaScheduleCoordinator
-from .time_parser import event_to_datetimes
+from .time_parser import clock_span, event_to_datetimes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -311,10 +311,24 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
             end_d = date.fromisoformat(dt_end_str)
             if isinstance(end, datetime):
                 # Timed event whose span crosses midnight into later
-                # days — anchor end at end-of-dt_end in Pacific so the
-                # banner length is correct.
+                # days: its own end time on the last day ("3:00 PM–11:00
+                # AM" Friday to Sunday ends Sunday at 11), as the server's
+                # feed and the phone read it (`ical_feed.event_span`); one
+                # with only a start time runs to the end of its last day.
+                # The sync keeps an overnight event's end time since
+                # 2026-10-12; before, every such event ended at 23:59.
                 end = datetime(end_d.year, end_d.month, end_d.day,
                                 23, 59, tzinfo=ZoneInfo("America/Los_Angeles"))
+                span = clock_span(time_str)
+                if span and span[1] is not None:
+                    clock = span[1] % (24 * 60)
+                    # An end at midnight ends the last day itself.
+                    last = end_d + timedelta(days=1) if clock == 0 else end_d
+                    on_last = datetime(last.year, last.month, last.day,
+                                       clock // 60, clock % 60,
+                                       tzinfo=ZoneInfo("America/Los_Angeles"))
+                    if on_last > start:
+                        end = on_last
             else:
                 end = end_d + timedelta(days=1)
         except ValueError:
