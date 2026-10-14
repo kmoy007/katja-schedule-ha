@@ -473,6 +473,17 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
             parts.append(f"Pickup: {outcome}")
         elif driver:
             parts.append(f"Pickup: drive:{driver}")
+    # Card-only: its twin for a departure, "how is X getting to the
+    # airport?" (`dropoff`: drive, taxi or no_drive), resolved by the
+    # server the same way, so the card lights the chosen chip.
+    dropoff = ev.get("dropoff") or {}
+    if isinstance(dropoff, dict) and dropoff.get("outcome"):
+        outcome = str(dropoff["outcome"])
+        driver = str(dropoff.get("driver") or "")
+        if outcome != "drive":
+            parts.append(f"Dropoff: {outcome}")
+        elif driver:
+            parts.append(f"Dropoff: drive:{driver}")
     # Card-only: the poller's live-status copy of a delayed flight (the
     # server's `live_flight` flag on the row). It is deleted when the delay
     # clears, so the card asks "who is collecting them?" on the flight's

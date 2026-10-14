@@ -245,6 +245,49 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "api_error", str(e))
 
     @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/plan_dropoff",
+        vol.Required("event_id"): str,
+        vol.Required("outcome"): vol.In(["drive", "taxi", "no_drive"]),
+        vol.Optional("driver"): str,
+    })
+    @websocket_api.async_response
+    async def ws_plan_dropoff(hass, connection, msg):
+        """Settle "how is X getting to the airport?" from the wall card.
+
+        The pickup question's twin for a flight leaving an LA airport (Ken,
+        2026-10-14: "Ask, like arrivals"). The outcomes are the server's
+        `renderer.DROPOFF_OUTCOMES`; the server works the answer out
+        (`app._settle_dropoff`) and words the reply. Through the bearer
+        endpoint like every other card action, so the token stays here.
+        """
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+
+        body = {"event_id": msg["event_id"], "outcome": msg["outcome"]}
+        if msg.get("driver"):
+            body["driver"] = msg["driver"]
+
+        def _call():
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(
+                    f"{api_url}/api/actions/events/plan-dropoff",
+                    headers={"Authorization": f"Bearer {api_token}",
+                             "Content-Type": "application/json"},
+                    json=body,
+                )
+                return resp.json()
+
+        try:
+            result = await hass.async_add_executor_job(_call)
+            await _refresh_schedule(hass)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/log_interactions",
         vol.Required("events"): [dict],
     })
@@ -653,6 +696,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_plan_pickup)
+    websocket_api.async_register_command(hass, ws_plan_dropoff)
     websocket_api.async_register_command(hass, ws_log_interactions)
     websocket_api.async_register_command(hass, ws_agent_action)
     websocket_api.async_register_command(hass, ws_preview_pruning_rule)
