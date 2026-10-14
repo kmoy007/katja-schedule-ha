@@ -202,6 +202,10 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
     cal_events = cal_cache.get("events", []) or []
     excluded_ids = set(overlay.get("excluded_ids", []) or [])
     rules = overlay.get("pruning_rules", []) or []
+    # Events a grade rule hid (school events for another grade): the server
+    # records each on its rule, so this needs no copy of the grade logic.
+    grade_hidden = {i for r in overlay.get("grade_rules", []) or []
+                    for i in (r.get("hidden") or {})}
 
     cal_by_id = {e["event_id"]: e for e in cal_events if e.get("event_id")}
     overlay_ids = {e.get("event_id") for e in manual_events if e.get("event_id")}
@@ -272,7 +276,8 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
         row = dict(cev)
         if ev_id in excluded_ids:
             row["status"] = (
-                "hidden_rule" if _matches_pruning_rule(rules, cev)
+                "hidden_rule"
+                if ev_id in grade_hidden or _matches_pruning_rule(rules, cev)
                 else "hidden_oneoff"
             )
         else:
