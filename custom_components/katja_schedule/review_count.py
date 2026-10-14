@@ -70,7 +70,8 @@ def unified_review_count(classified_events: list[dict],
     for r in classified_events or []:
         if r.get("status") not in REVIEW_STATUSES:
             continue
-        if (r.get("date") or "") < cutoff_iso:
+        # By its last day: a multi-day event still running stays (2026-10-12).
+        if max(r.get("date") or "", r.get("dt_end") or "") < cutoff_iso:
             continue
         eid = r.get("event_id") or ""
         if eid:
@@ -110,7 +111,8 @@ def review_breakdown(classified_events: list[dict],
         s = r.get("status", "")
         if s not in counts:
             continue
-        if (r.get("date") or "") < cutoff_iso:
+        # By its last day: a multi-day event still running stays (2026-10-12).
+        if max(r.get("date") or "", r.get("dt_end") or "") < cutoff_iso:
             continue
         counts[s] += 1
     counts["proposed"] = sum(

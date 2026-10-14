@@ -428,6 +428,33 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "api_error", str(e))
 
     @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/event_flow",
+        vol.Optional("event_id"): str,
+        vol.Optional("proposal_id"): str,
+    })
+    @websocket_api.async_response
+    async def ws_event_flow(hass, connection, msg):
+        """Read-only flow and history; the bearer stays inside HA."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+        params = {k: msg[k] for k in ("event_id", "proposal_id") if msg.get(k)}
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                resp = client.get(
+                    f"{api_url}/api/data/event-flow", params=params,
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+                return resp.json()
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
+    @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/list_pending_proposals",
     })
     @websocket_api.async_response
@@ -515,7 +542,9 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     ws_accept_event = _build_review_action_command(
         ws_type="katja_schedule/accept_event",
         http_path_tmpl="/api/actions/events/accept/{event_id}",
-        msg_schema={vol.Required("event_id"): str})
+        # What the Accept was shown; the server refuses a stale one.
+        msg_schema={vol.Required("event_id"): str, vol.Optional("version"): str},
+        body_keys=("version",))
     ws_hide_event = _build_review_action_command(
         ws_type="katja_schedule/hide_event",
         http_path_tmpl="/api/actions/events/hide/{event_id}",
@@ -524,20 +553,29 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         ws_type="katja_schedule/unhide_event",
         http_path_tmpl="/api/actions/events/unhide/{event_id}",
         msg_schema={vol.Required("event_id"): str})
+    # "Let the rules decide" on an event a person showed or hid by hand.
+    ws_follow_rules = _build_review_action_command(
+        ws_type="katja_schedule/follow_rules",
+        http_path_tmpl="/api/actions/events/follow-rules/{event_id}",
+        msg_schema={vol.Required("event_id"): str})
     ws_accept_all_new = _build_review_action_command(
         ws_type="katja_schedule/accept_all_new",
-        http_path_tmpl="/api/actions/events/accept-all-new")
+        http_path_tmpl="/api/actions/events/accept-all-new",
+        # What the card was shown; the server takes only those still so.
+        msg_schema={vol.Optional("versions"): dict}, body_keys=("versions",))
     ws_hide_all_new = _build_review_action_command(
         ws_type="katja_schedule/hide_all_new",
         http_path_tmpl="/api/actions/events/hide-all-new")
     ws_accept_all_changed = _build_review_action_command(
         ws_type="katja_schedule/accept_all_changed",
-        http_path_tmpl="/api/actions/events/accept-all-changed")
+        http_path_tmpl="/api/actions/events/accept-all-changed",
+        # What the card was shown; the server takes only those still so.
+        msg_schema={vol.Optional("versions"): dict}, body_keys=("versions",))
     ws_accept_batch = _build_review_action_command(
         ws_type="katja_schedule/accept_batch",
         http_path_tmpl="/api/actions/events/accept-batch",
-        msg_schema={vol.Required("event_ids"): [str]},
-        body_keys=("event_ids",))
+        msg_schema={vol.Required("event_ids"): [str], vol.Optional("versions"): dict},
+        body_keys=("event_ids", "versions"))
     ws_hide_batch = _build_review_action_command(
         ws_type="katja_schedule/hide_batch",
         http_path_tmpl="/api/actions/events/hide-batch",
@@ -621,9 +659,10 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_add_pruning_rule)
     websocket_api.async_register_command(hass, ws_list_pending_proposals)
     websocket_api.async_register_command(hass, ws_list_review_inbox)
+    websocket_api.async_register_command(hass, ws_event_flow)
     websocket_api.async_register_command(hass, ws_list_starred_events)
     for _cmd in (
-        ws_accept_event, ws_hide_event, ws_unhide_event,
+        ws_accept_event, ws_hide_event, ws_unhide_event, ws_follow_rules,
         ws_accept_all_new, ws_hide_all_new, ws_accept_all_changed,
         ws_accept_batch, ws_hide_batch, ws_unhide_all,
         ws_apply_proposal, ws_reject_proposal,

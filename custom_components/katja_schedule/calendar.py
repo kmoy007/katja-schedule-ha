@@ -10,6 +10,13 @@ parse:
     Status: new        # calendar | manual | new | changed | conflict
                        # | orphan | hidden_rule | hidden_oneoff
     Where: ...
+    Was: Tue Oct 14, 3:00 PM  # a calendar move waiting at Review: the
+                       # event is drawn at its new date and time, and this
+                       # is what the schedule still holds
+    Choice: show       # a person's own show/hide, which the rules don't
+                       # override; the sheet offers "Let the rules decide"
+    Cancelled: 1       # its calendar cancelled it: struck through until a
+                       # person acknowledges it (Remove), then kept hidden
     Notes: the event's own commentary, one line
     Flight: BA279 LAX→LHR
     Title: Uber to airport  # the row's own title, only when the summary
@@ -161,6 +168,9 @@ def _matches_pruning_rule(rules: list[dict], ev: dict) -> bool:
         sources = r.get("sources") or []
         if sources and label not in sources:
             continue
+        since = r.get("since") or ""
+        if isinstance(since, str) and since.strip() and ev_date < since.strip():
+            continue
         until = r.get("until") or ""
         if isinstance(until, str) and until.strip() and ev_date > until.strip():
             continue
@@ -193,6 +203,46 @@ def _settled_handedit_fields(ev: dict, cal_ev: dict) -> list[str]:
                 _normalize_for_diff(cal_ev.get(f) or ""):
             out.append(f)
     return out
+
+
+# A calendar move waiting at Review is drawn at its new date and time with
+# the schedule's own values as "Was:". Copy of renderer.tentative_move and
+# renderer.was_label (this package can't import the app), held to them by
+# tests/tentative_move_cases.json (tests/test_tentative_move.py).
+_TENTATIVE_MOVE_FIELDS = ("date", "time")
+
+
+def _tentative_move(diffs: list, hand_edited: set, cal_ev: dict) -> dict:
+    return {f: cal_ev.get(f, "") for f in _TENTATIVE_MOVE_FIELDS
+            if f in diffs and f not in hand_edited}
+
+
+def _was_label(was: dict) -> str:
+    parts = []
+    if was.get("date"):
+        try:
+            d = datetime.strptime(was["date"], "%Y-%m-%d").date()
+            parts.append(f"{d:%a} {d:%b} {d.day}")
+        except ValueError:
+            parts.append(was["date"])
+    if "time" in was:
+        parts.append(was.get("time") or "all day")
+    return ", ".join(parts)
+
+
+# What an Accept on a waiting calendar row is shown. Copy of
+# renderer.source_version (this package can't import the app), held to it
+# by tests/test_accept_version.py.
+_SOURCE_VERSION_FIELDS = ("date", "time", "who", "what", "where", "notes", "dt_end")
+
+
+def _source_version(cal_ev: dict | None) -> str:
+    if not cal_ev:
+        return ""
+    import hashlib
+    import json
+    raw = json.dumps([cal_ev.get(f) or "" for f in _SOURCE_VERSION_FIELDS], ensure_ascii=False)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
@@ -247,6 +297,13 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
                     "conflict" if any(f in hand_edited for f in diffs)
                     else "changed"
                 )
+                row["version"] = _source_version(cal_ev)
+                moved = _tentative_move(diffs, hand_edited, cal_ev)
+                if moved:
+                    row["was"] = _was_label({f: row.get(f, "") for f in moved})
+                    row.update(moved)
+                    if "date" in moved and cal_ev.get("dt_end"):
+                        row["dt_end"] = cal_ev["dt_end"]
             else:
                 row["status"] = "calendar"
         elif (ev_id and have_sync
@@ -277,12 +334,21 @@ def _classify_events(overlay: dict, cal_cache: dict) -> list[dict]:
         if ev_id in excluded_ids:
             row["status"] = (
                 "hidden_rule"
-                if ev_id in grade_hidden or _matches_pruning_rule(rules, cev)
+                if ev_id in grade_hidden
+                or ((overlay.get("retained_events") or {}).get(ev_id) or {}).get("reason") == "rule"
                 else "hidden_oneoff"
             )
         else:
             row["status"] = "new"
+            row["version"] = _source_version(cev)
         rows.append(row)
+    # A person's own show or hide, which the rules don't override; the
+    # card's sheet offers "Let the rules decide" on it (2026-10-12).
+    overrides = overlay.get("visibility_overrides") or {}
+    for row in rows:
+        choice = overrides.get(row.get("event_id") or "")
+        if choice in ("show", "hide"):
+            row["choice"] = choice
     return rows
 
 
@@ -359,6 +425,14 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
         parts.append(f"Status: {status}")
     if ev.get("where"):
         parts.append(f"Where: {ev['where']}")
+    if ev.get("was"):
+        parts.append(f"Was: {ev['was']}")
+    if ev.get("source_cancelled"):
+        parts.append("Cancelled: 1")
+    if ev.get("choice"):
+        parts.append(f"Choice: {ev['choice']}")
+    if ev.get("version"):
+        parts.append(f"Version: {ev['version']}")
     # The card's Details row used to print this whole metadata block
     # verbatim — the household read "Status: calendar", "Source: …" and a
     # 200-character Google event id (seen on the wall display 2026-09-29).
