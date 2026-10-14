@@ -1,4 +1,5 @@
-"""Conditional fetch of the /api/data snapshot.
+"""Conditional fetch of the /api/data snapshot, and of the read feeds the
+card asks for through a WebSocket command (`FeedRelay`).
 
 Kept free of `homeassistant.*` imports (like `review_count.py`) so the
 main repo's unit tests can import it standalone with a fake HTTP client.
@@ -83,3 +84,42 @@ class SnapshotFetcher:
         for key in HEARTBEAT_KEYS:
             if key in body:
                 data[key] = body[key]
+
+
+class FeedRelay:
+    """A read-only feed the card asks for through a WebSocket command,
+    fetched with If-None-Match and relayed unchanged.
+
+    The Family month grid (`/api/data/family-month`, fr-2026-09-28-b) is
+    one: a wall card showing it asks again on every five-minute tick, and
+    the server answers a poll where nothing changed with a 304. The last
+    ETag and body are kept for each query the card has asked for (the few
+    weeks or months it shows), at most MAX_QUERIES, the oldest dropped
+    first. Only an `ok` body is kept; an error the server sent (a 400 for
+    a bad month) is relayed as it came, for the card to show.
+    """
+
+    MAX_QUERIES = 8
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self._held: dict[str, tuple[str, Any]] = {}
+
+    def fetch(self, client: Any, api_url: str, api_token: str,
+              params: dict[str, Any]) -> Any:
+        key = "&".join(f"{k}={params[k]}" for k in sorted(params))
+        headers = {"Authorization": f"Bearer {api_token}"}
+        held = self._held.get(key)
+        if held:
+            headers["If-None-Match"] = held[0]
+        resp = client.get(f"{api_url.rstrip('/')}{self.path}", params=params, headers=headers)
+        if resp.status_code == 304 and held:
+            return held[1]
+        body = resp.json()
+        etag = resp.headers.get("ETag")
+        if resp.status_code == 200 and etag and isinstance(body, dict) and body.get("ok"):
+            self._held.pop(key, None)
+            self._held[key] = (etag, body)
+            while len(self._held) > self.MAX_QUERIES:
+                self._held.pop(next(iter(self._held)))
+        return body

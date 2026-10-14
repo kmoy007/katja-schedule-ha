@@ -18,9 +18,13 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import CONF_API_TOKEN, CONF_API_URL, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL, DOMAIN
 from .coordinator import KatjaScheduleCoordinator
+from .fetch import FeedRelay
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["calendar", "sensor"]
+# The Family month grid's last answer for each query the card asked for,
+# so a wall card polling it costs a 304 when nothing changed.
+_FAMILY_MONTH = FeedRelay("/api/data/family-month")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -693,6 +697,36 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
+    @websocket_api.websocket_command({
+        vol.Required("type"): "katja_schedule/family_month",
+        vol.Optional("month"): str,
+        vol.Optional("start"): str,
+        vol.Optional("days"): int,
+    })
+    @websocket_api.async_response
+    async def ws_family_month(hass, connection, msg):
+        """The Family month grid (fr-2026-09-28-b): a month (`month`,
+        "YYYY-MM") or `days` days from `start`, relayed unchanged from
+        `/api/data/family-month`. The server decides every column, flag and
+        verdict; the card only draws them. Fetched with If-None-Match
+        (`FeedRelay`), so a wall card polling it costs a 304 when nothing
+        changed."""
+        try:
+            api_url, api_token = _get_api_config(hass)
+        except ValueError as e:
+            connection.send_error(msg["id"], "not_configured", str(e))
+            return
+        params = {k: msg[k] for k in ("month", "start", "days") if msg.get(k) not in (None, "")}
+
+        def _call():
+            with httpx.Client(timeout=15) as client:
+                return _FAMILY_MONTH.fetch(client, api_url, api_token, params)
+        try:
+            result = await hass.async_add_executor_job(_call)
+            connection.send_result(msg["id"], result)
+        except Exception as e:
+            connection.send_error(msg["id"], "api_error", str(e))
+
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
     websocket_api.async_register_command(hass, ws_plan_pickup)
@@ -705,6 +739,7 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list_review_inbox)
     websocket_api.async_register_command(hass, ws_event_flow)
     websocket_api.async_register_command(hass, ws_list_starred_events)
+    websocket_api.async_register_command(hass, ws_family_month)
     for _cmd in (
         ws_accept_event, ws_hide_event, ws_unhide_event, ws_follow_rules,
         ws_accept_all_new, ws_hide_all_new, ws_accept_all_changed,
