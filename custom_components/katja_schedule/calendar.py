@@ -41,6 +41,11 @@ parse:
                        # the event's place in /api/data's
                        # `no_drive_places` (home, a place still TBC, three
                        # characters or fewer; drive_time.drive_time_offered)
+    DriveFrom: water garden|Water Garden
+                       # where a person said the drive to it starts (the
+                       # row's `drive_from`, fr-2026-10-15-a), as alias and
+                       # words from /api/data's `drive_origins`; no line is
+                       # home. The card's picker starts on it.
 
 Status mirrors renderer.py classification on the web app, so the HA card can
 show the same set of categories as the schedule UI (pending review,
@@ -515,6 +520,11 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # card keeps no copy of the rule.
     if ev.get("no_drive"):
         parts.append("Drive: none")
+    # Card-only: where a person said the drive here starts, only when the
+    # server names it among its starting points (_all_rows reads them off
+    # /api/data's `drive_origins`), so the card keeps no copy of the list.
+    if ev.get("drive_from") and ev.get("drive_from_label"):
+        parts.append(f"DriveFrom: {ev['drive_from']}|{ev['drive_from_label']}")
     # bug-20260512-211958: a recurring-event instance carries the
     # parent series id so the card can prompt "Star all upcoming?"
     # (mode: "series") instead of single-instance star — same UX the
@@ -574,9 +584,18 @@ class KatjaScheduleCalendar(CoordinatorEntity, CalendarEntity):
         # The places the server offers no Drive time for (an older server
         # sends none, and the card falls back to its own length check).
         no_drive = set(self.coordinator.data.get("no_drive_places") or [])
+        # The server's named starting points and their words: a row's
+        # remembered start is written only when it is one of them (an older
+        # server sends none, and then no row says where its drive starts).
+        starts = {o.get("alias"): o.get("label")
+                  for o in self.coordinator.data.get("drive_origins") or []
+                  if isinstance(o, dict) and o.get("alias")}
         for row in rows:
             if str(row.get("where") or "").strip() in no_drive:
                 row["no_drive"] = True
+            start = row.get("drive_from")
+            if start and starts.get(start):
+                row["drive_from_label"] = starts[start]
         return rows
 
     @staticmethod

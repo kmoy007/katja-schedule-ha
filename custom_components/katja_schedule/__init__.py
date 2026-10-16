@@ -670,6 +670,22 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         },
         body_keys=("event_id", "date", "time", "what", "who", "starred",
                    "mode", "recurring_event_id"))
+    # Where the drive to an event starts, remembered from the card's picker
+    # (fr-2026-10-15-a): one of the server's named starts, "home" clears it.
+    # The server refuses anything else, and an event whose drive has no
+    # start a person picks.
+    ws_set_drive_from = _build_review_action_command(
+        ws_type="katja_schedule/set_drive_from",
+        http_path_tmpl="/api/actions/events/drive-from",
+        msg_schema={
+            vol.Required("event_id"): str,
+            vol.Optional("date"): str,
+            vol.Optional("time"): str,
+            vol.Optional("what"): str,
+            vol.Optional("who"): str,
+            vol.Required("drive_from"): str,
+        },
+        body_keys=("event_id", "date", "time", "what", "who", "drive_from"))
 
     @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/list_starred_events",
@@ -746,6 +762,6 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         ws_accept_batch, ws_hide_batch, ws_unhide_all,
         ws_apply_proposal, ws_reject_proposal,
         ws_apply_proposals_batch, ws_reject_proposals_batch,
-        ws_star_event,
+        ws_star_event, ws_set_drive_from,
     ):
         websocket_api.async_register_command(hass, _cmd)
