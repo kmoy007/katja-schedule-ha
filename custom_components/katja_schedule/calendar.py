@@ -46,6 +46,11 @@ parse:
                        # row's `drive_from`, fr-2026-10-15-a), as alias and
                        # words from /api/data's `drive_origins`; no line is
                        # home. The card's picker starts on it.
+    ArriveBy: 2026-10-20T10:00:00-07:00
+                       # when a drive to a flight leaving one of the
+                       # household airports must get there (its departure
+                       # less the airport buffer, the server's
+                       # `drive_arrive_by`); the card's Drive time aims for it
 
 Status mirrors renderer.py classification on the web app, so the HA card can
 show the same set of categories as the schedule UI (pending review,
@@ -525,6 +530,13 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # /api/data's `drive_origins`), so the card keeps no copy of the list.
     if ev.get("drive_from") and ev.get("drive_from_label"):
         parts.append(f"DriveFrom: {ev['drive_from']}|{ev['drive_from_label']}")
+    # Card-only: when a drive to it must get there, for a flight leaving one
+    # of the household airports: its departure less the airport buffer, as
+    # the server works it out (/api/data's `drive_arrive_by` on the row,
+    # 2026-10-20). The card's Drive time aims for it rather than take-off,
+    # and keeps no copy of the buffer.
+    if ev.get("drive_arrive_by"):
+        parts.append(f"ArriveBy: {ev['drive_arrive_by']}")
     # bug-20260512-211958: a recurring-event instance carries the
     # parent series id so the card can prompt "Star all upcoming?"
     # (mode: "series") instead of single-instance star — same UX the

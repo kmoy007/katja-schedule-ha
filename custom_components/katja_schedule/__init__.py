@@ -167,8 +167,13 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
 
     @websocket_api.websocket_command({
         vol.Required("type"): "katja_schedule/refresh_flight",
-        vol.Required("flight_number"): str,
-        vol.Required("date"): str,
+        # The event (0.47.0): the server reads its flight off the row and
+        # says in its own words why there is none to look up, as it does
+        # for the web and the phone (bug-ios-20261020-075832). The flight's
+        # number and date are the older card's request.
+        vol.Optional("event_id"): str,
+        vol.Optional("flight_number"): str,
+        vol.Optional("date"): str,
         vol.Optional("origin"): str,
         vol.Optional("destination"): str,
     })
@@ -180,11 +185,15 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "not_configured", str(e))
             return
 
-        body = {"flight_number": msg["flight_number"], "date": msg["date"]}
-        if msg.get("origin"):
-            body["origin"] = msg["origin"]
-        if msg.get("destination"):
-            body["destination"] = msg["destination"]
+        if msg.get("event_id"):
+            body = {"event_id": msg["event_id"]}
+        else:
+            body = {"flight_number": msg.get("flight_number", ""),
+                    "date": msg.get("date", "")}
+            if msg.get("origin"):
+                body["origin"] = msg["origin"]
+            if msg.get("destination"):
+                body["destination"] = msg["destination"]
 
         def _call():
             with httpx.Client(timeout=15) as client:
