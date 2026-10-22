@@ -90,13 +90,14 @@ class FeedRelay:
     """A read-only feed the card asks for through a WebSocket command,
     fetched with If-None-Match and relayed unchanged.
 
-    The Family month grid (`/api/data/family-month`, fr-2026-09-28-b) and
-    the Starred feed (`/api/data/starred-events`, 2026-10-21) are two: a
-    wall card showing one asks again on every five-minute tick, and the
-    server answers a poll where nothing changed with a 304. The last ETag
-    and body are kept for each query the card has asked for (the few weeks
-    or months it shows; the Starred feed has one, with no parameters), at
-    most MAX_QUERIES, the oldest dropped first. Only an `ok` body is kept;
+    The card's five-minute tick asks for three (`_build_feed_command`): the
+    pending proposals (`/api/data/pending-proposals`), the Starred feed
+    (`/api/data/starred-events`) and the Family month grid
+    (`/api/data/family-month`, fr-2026-09-28-b), and the server answers a
+    poll where nothing changed with a 304. The last ETag and body are kept
+    for each query the card has asked for (the few weeks or months of the
+    grid it shows; the other two have one, with no parameters), at most
+    MAX_QUERIES, the oldest dropped first. Only an `ok` body is kept;
     an error the server sent (a 400 for a bad month) is relayed as it came,
     for the card to show.
     """

@@ -22,12 +22,12 @@ from .fetch import FeedRelay
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["calendar", "sensor"]
-# The Family month grid's last answer for each query the card asked for,
-# so a wall card polling it costs a 304 when nothing changed.
-_FAMILY_MONTH = FeedRelay("/api/data/family-month")
-# The Starred feed's last answer, for the same reason: the card asks for it
-# on every five-minute tick once its Starred view has opened.
+# The feeds the card asks for on its five-minute tick, each with its last
+# answer kept, so a wall card polling one costs a 304 when nothing changed
+# (`_build_feed_command`).
+_PENDING_PROPOSALS = FeedRelay("/api/data/pending-proposals")
 _STARRED = FeedRelay("/api/data/starred-events")
+_FAMILY_MONTH = FeedRelay("/api/data/family-month")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -513,40 +513,60 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         except Exception as e:
             connection.send_error(msg["id"], "api_error", str(e))
 
-    @websocket_api.websocket_command({
-        vol.Required("type"): "katja_schedule/list_pending_proposals",
-    })
-    @websocket_api.async_response
-    async def ws_list_pending_proposals(hass, connection, msg):
-        """Return the schedule app's queue of pending agent proposals so
-        the card can fold them into its event list (REVIEW badges in
-        parity with the web schedule, fr-2026-05-07-d). The endpoint is
-        token-authed; the card never sees the bearer.
+    def _build_feed_command(*, ws_type: str, relay: FeedRelay,
+                            msg_schema: dict | None = None):
+        """Factory: an async websocket handler for a read-only feed the card
+        asks for on its five-minute tick, fetched through `relay` (with
+        If-None-Match, the last body kept) and relayed unchanged, so a poll
+        where nothing changed costs a 304. Every key of the message but
+        `type` and `id` is sent as a query parameter (HA's schema refuses a
+        key `msg_schema` doesn't name); an empty one is left out.
+        tests/test_ha_ws_refresh.py fails on a feed the card polls that
+        isn't built here."""
+        @websocket_api.websocket_command({
+            vol.Required("type"): ws_type,
+            **(msg_schema or {}),
+        })
+        @websocket_api.async_response
+        async def _handler(hass, connection, msg):
+            try:
+                api_url, api_token = _get_api_config(hass)
+            except ValueError as e:
+                connection.send_error(msg["id"], "not_configured", str(e))
+                return
+            params = {k: msg[k] for k in msg
+                      if k not in ("type", "id") and msg[k] not in (None, "")}
 
-        Each proposal carries `source`, `unverified` and `reason` (the
-        server's `mobile_bootstrap.proposal_provenance`), which the card's
-        sheet prints beside Apply. The reply is relayed unchanged, as
-        `list_review_inbox`'s is: a filter here would drop the warning for
-        mail a stranger sent to the inbox."""
-        try:
-            api_url, api_token = _get_api_config(hass)
-        except ValueError as e:
-            connection.send_error(msg["id"], "not_configured", str(e))
-            return
+            def _call():
+                with httpx.Client(timeout=15) as client:
+                    return relay.fetch(client, api_url, api_token, params)
+            try:
+                result = await hass.async_add_executor_job(_call)
+                connection.send_result(msg["id"], result)
+            except Exception as e:
+                connection.send_error(msg["id"], "api_error", str(e))
+        return _handler
 
-        def _call():
-            with httpx.Client(timeout=10) as client:
-                resp = client.get(
-                    f"{api_url}/api/data/pending-proposals",
-                    headers={"Authorization": f"Bearer {api_token}"},
-                )
-                return resp.json()
-
-        try:
-            result = await hass.async_add_executor_job(_call)
-            connection.send_result(msg["id"], result)
-        except Exception as e:
-            connection.send_error(msg["id"], "api_error", str(e))
+    # The schedule app's queue of pending agent proposals, which the card
+    # folds into its event list (REVIEW badges in parity with the web
+    # schedule, fr-2026-05-07-d). Each proposal carries `source`,
+    # `unverified` and `reason` (the server's
+    # `mobile_bootstrap.proposal_provenance`), which the card's sheet prints
+    # beside Apply. Relayed unchanged, as `list_review_inbox`'s is: a filter
+    # here would drop the warning for mail a stranger sent to the inbox.
+    ws_list_pending_proposals = _build_feed_command(
+        ws_type="katja_schedule/list_pending_proposals", relay=_PENDING_PROPOSALS)
+    # Household-starred events in the next 6 months: the card's Starred
+    # view, once it has opened, without duplicating the overlay-fetch logic.
+    ws_list_starred_events = _build_feed_command(
+        ws_type="katja_schedule/list_starred_events", relay=_STARRED)
+    # The Family month grid (fr-2026-09-28-b): a month (`month`, "YYYY-MM")
+    # or `days` days from `start`. The server decides every column, flag and
+    # verdict; the card only draws them.
+    ws_family_month = _build_feed_command(
+        ws_type="katja_schedule/family_month", relay=_FAMILY_MONTH,
+        msg_schema={vol.Optional("month"): str, vol.Optional("start"): str,
+                    vol.Optional("days"): int})
 
     # ----- Review-queue WS commands (fr-2026-05-11-b) ---------------
     # Each command is a thin pass-through to a /api/actions/* bearer
@@ -698,60 +718,6 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
             vol.Required("drive_from"): str,
         },
         body_keys=("event_id", "date", "time", "what", "who", "drive_from"))
-
-    @websocket_api.websocket_command({
-        vol.Required("type"): "katja_schedule/list_starred_events",
-    })
-    @websocket_api.async_response
-    async def ws_list_starred_events(hass, connection, msg):
-        """Read-only feed of household-starred events in the next 6 months
-        — surfaces the Starred view on the HA card without duplicating
-        the overlay-fetch logic. Fetched with If-None-Match (`FeedRelay`),
-        so a wall card polling it costs a 304 when nothing changed."""
-        try:
-            api_url, api_token = _get_api_config(hass)
-        except ValueError as e:
-            connection.send_error(msg["id"], "not_configured", str(e))
-            return
-
-        def _call():
-            with httpx.Client(timeout=15) as client:
-                return _STARRED.fetch(client, api_url, api_token, {})
-        try:
-            result = await hass.async_add_executor_job(_call)
-            connection.send_result(msg["id"], result)
-        except Exception as e:
-            connection.send_error(msg["id"], "api_error", str(e))
-
-    @websocket_api.websocket_command({
-        vol.Required("type"): "katja_schedule/family_month",
-        vol.Optional("month"): str,
-        vol.Optional("start"): str,
-        vol.Optional("days"): int,
-    })
-    @websocket_api.async_response
-    async def ws_family_month(hass, connection, msg):
-        """The Family month grid (fr-2026-09-28-b): a month (`month`,
-        "YYYY-MM") or `days` days from `start`, relayed unchanged from
-        `/api/data/family-month`. The server decides every column, flag and
-        verdict; the card only draws them. Fetched with If-None-Match
-        (`FeedRelay`), so a wall card polling it costs a 304 when nothing
-        changed."""
-        try:
-            api_url, api_token = _get_api_config(hass)
-        except ValueError as e:
-            connection.send_error(msg["id"], "not_configured", str(e))
-            return
-        params = {k: msg[k] for k in ("month", "start", "days") if msg.get(k) not in (None, "")}
-
-        def _call():
-            with httpx.Client(timeout=15) as client:
-                return _FAMILY_MONTH.fetch(client, api_url, api_token, params)
-        try:
-            result = await hass.async_add_executor_job(_call)
-            connection.send_result(msg["id"], result)
-        except Exception as e:
-            connection.send_error(msg["id"], "api_error", str(e))
 
     websocket_api.async_register_command(hass, ws_refresh_drive)
     websocket_api.async_register_command(hass, ws_refresh_flight)
