@@ -25,6 +25,9 @@ PLATFORMS = ["calendar", "sensor"]
 # The Family month grid's last answer for each query the card asked for,
 # so a wall card polling it costs a 304 when nothing changed.
 _FAMILY_MONTH = FeedRelay("/api/data/family-month")
+# The Starred feed's last answer, for the same reason: the card asks for it
+# on every five-minute tick once its Starred view has opened.
+_STARRED = FeedRelay("/api/data/starred-events")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -703,19 +706,17 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
     async def ws_list_starred_events(hass, connection, msg):
         """Read-only feed of household-starred events in the next 6 months
         — surfaces the Starred view on the HA card without duplicating
-        the overlay-fetch logic."""
+        the overlay-fetch logic. Fetched with If-None-Match (`FeedRelay`),
+        so a wall card polling it costs a 304 when nothing changed."""
         try:
             api_url, api_token = _get_api_config(hass)
         except ValueError as e:
             connection.send_error(msg["id"], "not_configured", str(e))
             return
+
         def _call():
             with httpx.Client(timeout=15) as client:
-                resp = client.get(
-                    f"{api_url}/api/data/starred-events",
-                    headers={"Authorization": f"Bearer {api_token}"},
-                )
-                return resp.json()
+                return _STARRED.fetch(client, api_url, api_token, {})
         try:
             result = await hass.async_add_executor_job(_call)
             connection.send_result(msg["id"], result)
