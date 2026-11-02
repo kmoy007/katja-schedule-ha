@@ -50,7 +50,15 @@ parse:
                        # when a drive to a flight leaving one of the
                        # household airports must get there (its departure
                        # less the airport buffer, the server's
-                       # `drive_arrive_by`); the card's Drive time aims for it
+                       # `drive_arrive_by`), or a warm-up's start before its
+                       # game (2026-10-24); the card's Drive time aims for it
+    AttachedTo: <parent id>|lead|before BU15 EA at LAIFC
+                       # the link a child row carries (a warm-up, the drive
+                       # to it, a flight's ride or pickup), as the server
+                       # words it (/api/data's `attached_to`:
+                       # {parent_id, role, words}; docs/attached-events.md,
+                       # stage 2). The card prints the words under the row
+                       # and on its sheet; no line is no link
 
 Status mirrors renderer.py classification on the web app, so the HA card can
 show the same set of categories as the schedule UI (pending review,
@@ -537,6 +545,13 @@ def _to_calendar_event(ev: dict) -> CalendarEvent | None:
     # and keeps no copy of the buffer.
     if ev.get("drive_arrive_by"):
         parts.append(f"ArriveBy: {ev['drive_arrive_by']}")
+    # Card-only: the link a child row carries, as the server words it
+    # (/api/data's `attached_to`; docs/attached-events.md, stage 2). The
+    # words are last, so a pipe in a title is kept; the card prints them as
+    # they come and keeps no copy of the rule.
+    link = ev.get("attached_to")
+    if isinstance(link, dict) and link.get("parent_id") and link.get("words"):
+        parts.append(f"AttachedTo: {link['parent_id']}|{link.get('role') or ''}|{link['words']}")
     # bug-20260512-211958: a recurring-event instance carries the
     # parent series id so the card can prompt "Star all upcoming?"
     # (mode: "series") instead of single-instance star — same UX the
