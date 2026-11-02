@@ -637,6 +637,24 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         ws_type="katja_schedule/follow_rules",
         http_path_tmpl="/api/actions/events/follow-rules/{event_id}",
         msg_schema={vol.Required("event_id"): str})
+    # Detach a child row from the event it follows (docs/attached-events.md,
+    # stage 3): the card's sheet shows Detach under a row's AttachedTo line.
+    ws_detach_event = _build_review_action_command(
+        ws_type="katja_schedule/detach_event",
+        http_path_tmpl="/api/actions/events/detach/{event_id}",
+        msg_schema={vol.Required("event_id"): str})
+    # Add as drive row (stage 3): the sheet's chips name who drives, and
+    # the server queues the 🚗 row as the event's child, worded there.
+    ws_propose_drive_row = _build_review_action_command(
+        ws_type="katja_schedule/propose_drive_row",
+        http_path_tmpl="/api/actions/events/drive-row",
+        msg_schema={
+            vol.Required("event_id"): str,
+            vol.Optional("driver"): str,
+            vol.Optional("leave_by"): str,
+            vol.Optional("where"): str,
+        },
+        body_keys=("event_id", "driver", "leave_by", "where"))
     ws_accept_all_new = _build_review_action_command(
         ws_type="katja_schedule/accept_all_new",
         http_path_tmpl="/api/actions/events/accept-all-new",
@@ -739,5 +757,6 @@ def _register_ws_commands(hass: HomeAssistant) -> None:
         ws_apply_proposal, ws_reject_proposal,
         ws_apply_proposals_batch, ws_reject_proposals_batch,
         ws_star_event, ws_set_drive_from,
+        ws_detach_event, ws_propose_drive_row,
     ):
         websocket_api.async_register_command(hass, _cmd)
